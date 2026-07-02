@@ -1,0 +1,17 @@
+[package]
+name = "brain0-identity"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Deterministic cross-machine symbol identity and rename/move tracking for brain0"
+
+[lints]
+workspace = true
+
+[dependencies]
+brain0-model.workspace = true
+brain0-parser.workspace = true

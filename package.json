@@ -1,0 +1,25 @@
+{
+  "name": "brain0-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Passive, incremental decision-graph for AI-assisted software development",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "dev": "node --env-file-if-exists=.env scripts/dev.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

@@ -1,0 +1,24 @@
+[package]
+name = "brain0-observer"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Passive observer for brain0: git reader + checkpoint engine producing dated versions"
+
+[lints]
+workspace = true
+
+[dependencies]
+brain0-model.workspace = true
+brain0-parser.workspace = true
+brain0-identity.workspace = true
+brain0-storage.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+blake3.workspace = true
+walkdir.workspace = true
+notify.workspace = true

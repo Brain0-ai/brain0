@@ -1,0 +1,16 @@
+[package]
+name = "brain0-mcp"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "MCP (JSON-RPC over stdio) transport for brain0's query channel"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true

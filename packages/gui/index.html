@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>brain0</title>
+    <!-- Inter + JetBrains Mono are the documented open substitutes for the Linear families;
+         system fonts are the offline fallback. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="icon" type="image/svg+xml" href="/brain0-logo.svg" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* ── Linear design tokens ─────────────────────────────────────────────── */
+      :root {
+        color-scheme: dark;
+        --canvas: #010102;
+        --surface-1: #0f1011;
+        --surface-2: #141516;
+        --surface-3: #18191a;
+        --hairline: #23252a;
+        --hairline-strong: #34343a;
+        --ink: #f7f8f8;
+        --ink-muted: #d0d6e0;
+        --ink-subtle: #8a8f98;
+        --ink-tertiary: #62666d;
+        --accent: #5e6ad2;
+        --accent-hover: #828fff;
+        --accent-focus: #5e69d1;
+        --success: #27a644;
+        --danger: #d65c5c;
+        --font-sans: "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+        --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+        --r-md: 8px;
+        --r-lg: 12px;
+        --r-xl: 16px;
+        --r-pill: 9999px;
+        --panel-w: 440px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; overflow: hidden;
+        font-family: var(--font-sans);
+        font-size: 14px; line-height: 1.5; letter-spacing: -0.05px;
+        background: var(--canvas); color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── Top nav (Linear top-nav: 56px, canvas, hairline rule) ────────────── */
+      #toolbar {
+        position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 10;
+        display: flex; align-items: center; gap: 16px; padding: 0 20px;
+        background: rgba(1, 1, 2, 0.82); border-bottom: 1px solid var(--hairline);
+        backdrop-filter: blur(8px);
+      }
+      .brand { display: flex; align-items: center; color: var(--ink); }
+      .brand svg { height: 22px; width: auto; display: block; }
+
+      #toolbar label { font-size: 12px; color: var(--ink-subtle); display: flex; align-items: center; gap: 8px; }
+      #toolbar .spacer { flex: 1; }
+
+      /* ── Refresh button + live status (mirrors the viewctl button + tl-now styling) ───────── */
+      .tb-btn {
+        color: var(--ink); background: var(--surface-2); border: 1px solid var(--hairline);
+        border-radius: var(--r-md); font-size: 12px; padding: 5px 12px; cursor: pointer;
+        transition: background 0.12s ease, border-color 0.12s ease;
+      }
+      .tb-btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--hairline-strong); }
+      .tb-btn:disabled { opacity: 0.5; cursor: default; }
+      .tb-status { font-family: var(--font-mono); font-size: 11px; color: var(--accent-hover); min-width: 120px; }
+
+      /* ── Timeline scrubber: dated edges + live cutoff + filled track ───────── */
+      .timeline { display: flex; flex-direction: column; gap: 3px; width: 340px; }
+      .tl-top { display: flex; align-items: baseline; justify-content: space-between; }
+      .tl-label { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-subtle); }
+      .tl-now { font-family: var(--font-mono); font-size: 11px; color: var(--accent-hover); }
+      .tl-track { display: flex; align-items: center; gap: 8px; }
+      .tl-edge { font-family: var(--font-mono); font-size: 10px; color: var(--ink-tertiary); white-space: nowrap; }
+      #timeline {
+        flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: var(--r-pill);
+        background: var(--hairline-strong); outline: none; cursor: pointer;
+      }
+      #timeline::-webkit-slider-thumb {
+        -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+        background: var(--accent); border: 2px solid var(--surface-2);
+        box-shadow: 0 0 0 1px var(--accent), 0 0 8px rgba(94, 106, 210, 0.5); cursor: pointer;
+      }
+      #timeline::-moz-range-thumb {
+        width: 14px; height: 14px; border: 2px solid var(--surface-2); border-radius: 50%;
+        background: var(--accent); cursor: pointer;
+      }
+      #timeline::-moz-range-progress { background: var(--accent); height: 4px; border-radius: var(--r-pill); }
+      /* ── Legend: fixed bottom-left overlay over the graph ─────────────────── */
+      #legend {
+        position: fixed; left: 20px; bottom: 24px; z-index: 11;
+        display: flex; flex-direction: column; gap: 7px;
+        padding: 11px 13px; font-size: 11px; color: var(--ink-subtle);
+        background: rgba(15, 16, 17, 0.9); border: 1px solid var(--hairline);
+        border-radius: var(--r-md); backdrop-filter: blur(6px);
+      }
+      #legend .row { display: flex; align-items: center; gap: 8px; }
+      #legend .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+      #legend .dot-task { background: var(--accent); }
+      #legend .riskbar { display: flex; flex-direction: column; gap: 4px; margin-top: 1px; }
+      #legend .swatch { width: 104px; height: 6px; border-radius: var(--r-pill);
+        background: linear-gradient(90deg, var(--success), #d8b24a, var(--danger)); }
+      #legend .scale { display: flex; justify-content: space-between; width: 104px;
+        color: var(--ink-tertiary); font-size: 10px; }
+
+      /* ── View control: level-of-detail indicator + zoom (bottom-right, before the sidebar) ── */
+      #viewctl {
+        position: fixed; bottom: 24px; right: calc(var(--panel-w) + 20px); z-index: 11;
+        display: flex; flex-direction: column; gap: 8px; min-width: 196px;
+        padding: 11px 13px; background: rgba(15, 16, 17, 0.9);
+        border: 1px solid var(--hairline); border-radius: var(--r-md); backdrop-filter: blur(6px);
+      }
+      #viewctl .vc-title { font-size: 10px; font-weight: 500; text-transform: uppercase;
+        letter-spacing: 0.5px; color: var(--ink-subtle); }
+      #viewctl .lod { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--ink-tertiary); }
+      #viewctl .lod-sep { opacity: 0.45; }
+      #viewctl .lod-step { cursor: pointer; padding: 1px 5px; border-radius: 4px;
+        transition: color 0.12s ease, background 0.12s ease; }
+      #viewctl .lod-step:hover { color: var(--ink-muted); }
+      #viewctl .lod-step.active { color: var(--accent-hover); font-weight: 600;
+        background: color-mix(in srgb, var(--accent) 18%, transparent); }
+      #viewctl .zoom { display: flex; align-items: center; gap: 8px; }
+      #viewctl .zoom button {
+        width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+        font-size: 16px; line-height: 1; color: var(--ink); background: var(--surface-2);
+        border: 1px solid var(--hairline); border-radius: var(--r-md); cursor: pointer;
+        transition: background 0.12s ease, border-color 0.12s ease;
+      }
+      #viewctl .zoom button:hover { background: var(--surface-3); border-color: var(--hairline-strong); }
+      #viewctl #zoom-pct { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted);
+        min-width: 42px; text-align: center; }
+      #viewctl #zoom-fit { margin-left: auto; font-size: 13px; }
+
+      #stage { position: fixed; inset: 56px var(--panel-w) 0 0; }
+
+      /* ── Detail panel = fixed docked reading pane (always present, not a floating popup) ──── */
+      #panel {
+        position: fixed; top: 56px; right: 0; bottom: 0; width: var(--panel-w); z-index: 10;
+        display: block; overflow-y: auto;
+        padding: 24px 24px 32px; font-size: 14px; line-height: 1.55;
+        background: var(--surface-1); color: var(--ink-muted);
+        border-left: 1px solid var(--hairline);
+      }
+      #panel::-webkit-scrollbar { width: 10px; }
+      #panel::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: var(--r-pill); border: 3px solid var(--surface-1); }
+      #panel h3 { margin: 0 0 4px; font-size: 20px; font-weight: 600; letter-spacing: -0.4px; color: var(--ink); }
+      #panel h4 {
+        margin: 22px 0 10px; padding-bottom: 6px; font-size: 11px; font-weight: 500;
+        text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-subtle);
+        border-bottom: 1px solid var(--hairline);
+      }
+      #panel > div { color: var(--ink-muted); margin: 3px 0; }
+      #panel b { color: var(--ink); font-weight: 500; }
+      #panel .muted { color: var(--ink-subtle); font-size: 13px; }
+      #panel .eyebrow {
+        font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.6px;
+        color: var(--accent-hover); margin-bottom: 4px;
+      }
+      #panel .version { border-left: 2px solid var(--hairline); padding: 6px 0 8px 12px; margin: 10px 0; }
+      #panel .version:hover { border-left-color: var(--hairline-strong); }
+      #panel .version .ts { color: var(--ink-tertiary); font-size: 11px; font-family: var(--font-mono); }
+      #panel ul { margin: 4px 0; padding-left: 18px; color: var(--ink-muted); }
+      #panel li { margin: 2px 0; }
+      #panel code { font-family: var(--font-mono); font-size: 12px; color: var(--accent-hover); }
+      #panel .empty { color: var(--ink-subtle); }
+      /* Visual legend: a real lavender dot and a green→red gradient so meaning reads instantly. */
+      #panel .empty .guide-legend { display: flex; flex-direction: column; gap: 12px; margin: 4px 0 2px; }
+      #panel .empty .guide-item { display: flex; align-items: flex-start; gap: 11px; }
+      #panel .empty .guide-item > div { display: flex; flex-direction: column; line-height: 1.35; }
+      #panel .empty .guide-item b { color: var(--ink); font-weight: 500; font-size: 13px; }
+      #panel .empty .g-note { color: var(--ink-subtle); font-size: 12px; }
+      #panel .empty .g-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 2px; }
+      #panel .empty .g-dot-task { background: var(--accent); box-shadow: 0 0 8px rgba(94, 106, 210, 0.5); }
+      #panel .empty .g-grad { width: 30px; height: 12px; border-radius: var(--r-pill); flex-shrink: 0; margin-top: 2px;
+        background: linear-gradient(90deg, var(--success), #d8b24a, var(--danger)); }
+      /* Gesture key: verb in a fixed column, result beside it — scannable, not a prose blob. */
+      #panel .empty .guide-key { margin: 4px 0 0; display: flex; flex-direction: column; gap: 9px; }
+      #panel .empty .guide-row { display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: baseline; }
+      #panel .empty .guide-row dt { color: var(--ink); font-weight: 500; font-size: 13px; }
+      #panel .empty .guide-row dd { margin: 0; color: var(--ink-subtle); font-size: 13px; line-height: 1.4; }
+
+      /* Contextual header: badge + title + pills, instead of raw key:value rows. */
+      #panel .hd { margin-bottom: 6px; }
+      #panel .hd-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+      #panel .badge {
+        font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: var(--r-pill); flex-shrink: 0;
+      }
+      #panel .badge-task {
+        color: var(--accent-hover);
+        background: color-mix(in srgb, var(--accent) 20%, transparent);
+        border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+      }
+      #panel .badge-artifact { color: var(--ink-muted); background: var(--surface-2); border: 1px solid var(--hairline-strong); }
+      #panel .hd-title { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; color: var(--ink); line-height: 1.4; }
+      #panel .hd-title-sm { font-size: 16px; word-break: break-all; }
+      #panel .hd-sub { font-family: var(--font-mono); font-size: 11px; color: var(--ink-tertiary); margin-top: 4px; word-break: break-all; }
+      #panel .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+      #panel .pill {
+        display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-muted);
+        background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--r-pill); padding: 3px 9px;
+      }
+      #panel .pill .k { color: var(--ink-tertiary); }
+      #panel .pill .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+      #panel .hd-id { font-family: var(--font-mono); font-size: 10px; color: var(--ink-tertiary); margin-top: 10px; word-break: break-all; }
+
+      /* ── Commit card: message body, prompts-behind, files-changed ─────────── */
+      #panel .badge-commit {
+        color: var(--accent-hover);
+        background: color-mix(in srgb, var(--accent) 20%, transparent);
+        border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+      }
+      #panel pre.commit-msg {
+        white-space: pre-wrap; word-break: break-word; color: var(--ink-muted);
+        font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+        background: var(--surface-2); border: 1px solid var(--hairline);
+        border-radius: var(--r-md); padding: 10px 12px; margin: 10px 0 0; max-height: 200px;
+      }
+      /* Prompts behind a commit: clickable summary cards. */
+      #panel .prompt-list { display: flex; flex-direction: column; gap: 6px; }
+      #panel .prompt-item {
+        display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; cursor: pointer;
+        padding: 9px 11px; border: 1px solid var(--hairline); border-radius: var(--r-md);
+        background: var(--surface-2); color: var(--ink-muted); font-family: var(--font-sans);
+        transition: background 0.12s ease, border-color 0.12s ease;
+      }
+      #panel .prompt-item:hover { background: var(--surface-3); border-color: var(--accent-focus); }
+      #panel .prompt-sum { font-size: 13px; color: var(--ink); line-height: 1.4; }
+      #panel .prompt-meta { font-size: 11px; color: var(--ink-subtle); }
+      /* Files read (audit): reuses the "files changed" list style (.cf). Directory dimmed, name in
+         the default ink; out-of-repo reads coloured + flagged as the audit red flags. */
+      #panel .cf-path .rd-dir { color: var(--ink-tertiary); }
+      #panel .cf.cf-ext .cf-path { color: var(--danger); }
+      #panel .cf-kind.read-ext {
+        color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent);
+        border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+        border-radius: var(--r-pill); padding: 1px 7px;
+      }
+      /* ── Smart-chat (debug/audit) result: intent badge, egress notice, finding cards ──────── */
+      #panel .badge-debug { color: var(--accent-hover); background: color-mix(in srgb, var(--accent) 20%, transparent);
+        border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+      #panel .badge-audit { color: #d8b24a; background: color-mix(in srgb, #d8b24a 18%, transparent);
+        border: 1px solid color-mix(in srgb, #d8b24a 40%, transparent); }
+      #panel .ask-notice { font-size: 11px; font-family: var(--font-mono); margin: 8px 0 0; padding: 5px 9px;
+        border-radius: var(--r-md); border: 1px solid var(--hairline); }
+      #panel .ask-notice.ok { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+      #panel .ask-notice.warn { color: #e0a33a; background: color-mix(in srgb, #e0a33a 12%, transparent); }
+      #panel .ask-notice.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+      #panel .ask-explain { color: var(--ink-muted); margin: 12px 0 0; line-height: 1.55; }
+      #panel .dist { font-size: 13px; color: var(--ink-muted); }
+      #panel .dist .dist-g { color: var(--success); } #panel .dist .dist-y { color: #d8b24a; } #panel .dist .dist-r { color: var(--danger); }
+      #panel .read-ext { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+        color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent);
+        border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); border-radius: var(--r-pill); padding: 1px 7px; }
+      #panel .finding-list { display: flex; flex-direction: column; gap: 6px; }
+      #panel .finding-card { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; cursor: pointer;
+        padding: 9px 11px; border: 1px solid var(--hairline); border-left-width: 3px; border-radius: var(--r-md);
+        background: var(--surface-2); color: var(--ink-muted); font-family: var(--font-sans);
+        transition: background 0.12s ease, border-color 0.12s ease; }
+      #panel .finding-card:hover { background: var(--surface-3); }
+      #panel .finding-card .f-top { display: flex; align-items: center; gap: 7px; font-size: 10px; text-transform: uppercase;
+        letter-spacing: 0.4px; color: var(--ink-subtle); }
+      #panel .finding-card .f-verdict { text-transform: none; letter-spacing: 0; color: var(--ink-muted); }
+      #panel .finding-card .f-name { font-size: 13px; color: var(--ink); font-family: var(--font-mono); word-break: break-all; }
+      #panel .finding-card .f-reason { font-size: 12px; color: var(--ink-subtle); }
+      #panel .finding-card .sev-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--ink-subtle); }
+      #panel .finding-card.sev-info { border-left-color: var(--accent); }
+      #panel .finding-card.sev-info .sev-dot { background: var(--accent); }
+      #panel .finding-card.sev-warn { border-left-color: #e0a33a; } #panel .finding-card.sev-warn .sev-dot { background: #e0a33a; }
+      #panel .finding-card.sev-critical { border-left-color: var(--danger); } #panel .finding-card.sev-critical .sev-dot { background: var(--danger); }
+      #panel .finding-card.sev-gold { border-left-color: #d8b24a; } #panel .finding-card.sev-gold .sev-dot { background: #d8b24a; }
+
+      /* Files changed: a compact git-style list. */
+      #panel .cf-list { display: flex; flex-direction: column; gap: 8px; }
+      #panel .cf { border-left: 2px solid var(--hairline); padding: 2px 0 2px 12px; }
+      #panel .cf-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+      #panel .cf-path { font-family: var(--font-mono); font-size: 12px; color: var(--ink); word-break: break-all; }
+      #panel .cf-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--ink-subtle); }
+      #panel .cf-stat { font-family: var(--font-mono); font-size: 11px; }
+      #panel .cf-stat .add { color: var(--success); }
+      #panel .cf-stat .del { color: var(--danger); }
+      /* Back link from a prompt to its commit. */
+      #panel .back-link {
+        margin-bottom: 12px; padding: 4px 10px; cursor: pointer;
+        font-family: var(--font-sans); font-size: 12px; color: var(--ink-muted);
+        background: transparent; border: 1px solid var(--hairline); border-radius: var(--r-pill);
+        transition: color 0.12s ease, border-color 0.12s ease;
+      }
+      #panel .back-link:hover { color: var(--ink); border-color: var(--hairline-strong); }
+
+      /* Turn cards: summary prose + file chips grouped by meaning (declared / undeclared / phantom) */
+      #panel .vsum { margin: 6px 0 10px; color: var(--ink-muted); font-size: 13.5px; line-height: 1.6; }
+      #panel .vfiles { display: flex; flex-direction: column; gap: 8px; }
+      #panel .vf-row { display: flex; flex-direction: column; gap: 5px; }
+      #panel .vf-label {
+        font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+        color: var(--ink-subtle); cursor: help;
+      }
+      #panel .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+      #panel .chip {
+        font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted);
+        background: var(--surface-2); border: 1px solid var(--hairline);
+        border-radius: var(--r-pill); padding: 2px 9px; white-space: nowrap;
+      }
+      /* Changed silently — the drift that matters: amber. */
+      #panel .chip-undeclared { color: #d8b24a; border-color: color-mix(in srgb, #d8b24a 45%, transparent);
+        background: color-mix(in srgb, #d8b24a 10%, transparent); }
+      /* Announced but never observed: hollow/dashed. */
+      #panel .chip-phantom { color: var(--ink-tertiary); border-style: dashed; background: transparent; }
+      #panel .read-sum { margin: 2px 0 10px; font-size: 12px; color: var(--ink-subtle); }
+      /* DLP red flag: this read's content held a secret. */
+      #panel .chip-secret { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+        background: color-mix(in srgb, var(--danger) 10%, transparent); }
+      /* Read from outside the project tree. */
+      #panel .chip-external { color: var(--accent-hover); border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+        background: color-mix(in srgb, var(--accent) 10%, transparent); }
+      #panel .chips:not(.expanded) .chip-hidden { display: none; }
+      #panel .chip-more {
+        color: var(--ink-tertiary); cursor: pointer; font-family: var(--font-mono);
+        transition: color 0.12s ease, border-color 0.12s ease;
+      }
+      #panel .chip-more:hover { color: var(--ink); border-color: var(--hairline-strong); }
+
+      /* See-details = Linear button-secondary (surface lift + hairline, 8px) */
+      #panel .see-details {
+        margin-top: 6px; padding: 5px 12px; cursor: pointer;
+        font-family: var(--font-sans); font-size: 12px; font-weight: 500;
+        color: var(--ink); background: var(--surface-2);
+        border: 1px solid var(--hairline); border-radius: var(--r-md);
+        transition: background 0.12s ease, border-color 0.12s ease;
+      }
+      #panel .see-details:hover { background: var(--surface-3); border-color: var(--hairline-strong); }
+
+      /* Code / diff (Linear mono in product surfaces) */
+      #panel pre {
+        white-space: pre-wrap; word-break: break-word;
+        background: var(--canvas); border: 1px solid var(--hairline);
+        border-radius: var(--r-md); padding: 10px; margin: 6px 0 0;
+        font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+        overflow: auto; max-height: 240px;
+      }
+      #panel pre.diff { max-height: 380px; }
+      #panel pre.diff .dl { display: block; }
+      #panel pre.diff .add { color: var(--success); background: rgba(39, 166, 68, 0.10); }
+      #panel pre.diff .del { color: var(--danger); background: rgba(214, 92, 92, 0.10); }
+      #panel pre.diff .hunk { color: var(--accent-hover); }
+      #panel pre.diff .meta { color: var(--ink-tertiary); }
+      #panel pre.diff .ctx { color: var(--ink-muted); }
+
+      /* ── Prompt box (bottom-centered, AI-composer aesthetic, text-only) ───── */
+      #promptbar {
+        position: fixed; bottom: 24px; z-index: 12;
+        left: calc((100vw - var(--panel-w)) / 2); transform: translateX(-50%);
+        width: min(680px, calc(100vw - var(--panel-w) - 48px));
+      }
+      .prompt-box {
+        background: var(--surface-2); border: 1px solid var(--hairline);
+        border-radius: 22px; padding: 10px 12px 8px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.32);
+        transition: border-color 0.12s ease, box-shadow 0.12s ease;
+      }
+      .prompt-box:focus-within {
+        border-color: var(--hairline-strong);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.42),
+          0 0 0 2px color-mix(in srgb, var(--accent-focus) 35%, transparent);
+      }
+      #prompt {
+        display: block; width: 100%; border: none; outline: none; resize: none;
+        background: transparent; color: var(--ink);
+        font-family: var(--font-sans); font-size: 15px; line-height: 1.5; letter-spacing: -0.05px;
+        max-height: 168px; padding: 4px 4px 0; overflow-y: auto;
+      }
+      #prompt::placeholder { color: var(--ink-tertiary); }
+      #prompt::-webkit-scrollbar { width: 6px; }
+      #prompt::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 3px; }
+      .prompt-actions {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 6px;
+      }
+      .prompt-hint { font-size: 11px; color: var(--ink-tertiary); }
+      .prompt-hint kbd {
+        font-family: var(--font-mono); font-size: 10px; color: var(--ink-subtle);
+        background: var(--surface-3); border: 1px solid var(--hairline);
+        border-radius: 4px; padding: 1px 4px;
+      }
+      .send-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 32px; height: 32px; flex-shrink: 0; border: none; border-radius: 9999px;
+        cursor: pointer; background: var(--surface-3); color: var(--ink-tertiary);
+        transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
+      }
+      .send-btn:disabled { cursor: default; }
+      .send-btn.ready { background: var(--accent); color: #fff; }
+      .send-btn.ready:hover { background: var(--accent-hover); transform: translateY(-1px); }
+      .send-btn svg { width: 16px; height: 16px; }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <span class="brand" aria-label="Brain0">
+        <svg viewBox="-16 -16 472 162" fill="currentColor" role="img" aria-label="Brain0">
+          <g>
+            <path fill-rule="evenodd" d="M0,10 H20 V45 H72 V130 H0 Z M20,65 H52 V110 H20 Z"></path>
+            <path d="M88,45 H132 V65 H108 V130 H88 Z"></path>
+            <path d="M148,45 H212 V130 H148 V80 H168 V110 H192 V65 H148 V45 Z"></path>
+            <path d="M228,45 H248 V130 H228 Z M228,10 H248 V30 H228 Z"></path>
+            <path d="M264,45 H334 V130 H314 V65 H284 V130 H264 Z"></path>
+            <path fill-rule="evenodd" d="M350,10 L416,10 L440,34 L440,130 L350,130 Z M370,30 L420,30 L420,110 L370,110 Z"></path>
+            <polygon points="411.52,24.70 428.48,35.30 378.48,115.30 361.52,104.70"></polygon>
+          </g>
+        </svg>
+      </span>
+      <span class="spacer"></span>
+      <button id="refresh" class="tb-btn" title="Re-run the observer and reload the graph">Refresh</button>
+      <span id="refresh-status" class="tb-status"></span>
+      <div class="timeline">
+        <div class="tl-top">
+          <span class="tl-label">Timeline</span>
+          <span id="tl-now" class="tl-now">all</span>
+        </div>
+        <div class="tl-track">
+          <span id="tl-start" class="tl-edge">—</span>
+          <input id="timeline" type="range" min="0" max="100" value="100" step="0.5" />
+          <span id="tl-end" class="tl-edge">—</span>
+        </div>
+      </div>
+    </div>
+    <div id="stage"></div>
+    <div id="legend">
+      <div class="row"><span class="dot dot-task"></span> intent (task)</div>
+      <div class="row">code by risk</div>
+      <div class="riskbar">
+        <span class="swatch"></span>
+        <div class="scale"><span>safe</span><span>risky</span></div>
+      </div>
+    </div>
+    <div id="viewctl">
+      <div class="vc-title">graph level</div>
+      <div class="lod" id="lod">
+        <span class="lod-step" data-level="repo">repo</span><span class="lod-sep">›</span>
+        <span class="lod-step" data-level="module">module</span><span class="lod-sep">›</span>
+        <span class="lod-step" data-level="file">file</span><span class="lod-sep">›</span>
+        <span class="lod-step" data-level="symbol">symbol</span>
+      </div>
+      <div class="zoom">
+        <button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+        <span id="zoom-pct">100%</span>
+        <button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        <button id="zoom-fit" aria-label="Fit to view" title="Fit to view">⤢</button>
+      </div>
+    </div>
+    <aside id="panel">
+      <div class="empty">
+        <h3>Inspect the graph</h3>
+        <p class="muted">Select any node to read its full history here.</p>
+
+        <h4>What the dots mean</h4>
+        <div class="guide-legend">
+          <div class="guide-item">
+            <span class="g-dot g-dot-task"></span>
+            <div><b>Intents</b><span class="g-note">what an agent set out to do</span></div>
+          </div>
+          <div class="guide-item">
+            <span class="g-grad"></span>
+            <div><b>Code</b><span class="g-note">colored by risk — green is safe, red is risky</span></div>
+          </div>
+        </div>
+
+        <h4>How to explore</h4>
+        <dl class="guide-key">
+          <div class="guide-row"><dt>Scroll</dt><dd>zoom the lens: repo → module → file → symbol</dd></div>
+          <div class="guide-row"><dt>Drag</dt><dd>pan across the graph</dd></div>
+          <div class="guide-row"><dt>Click</dt><dd>open a node's versions, attribution and diffs</dd></div>
+          <div class="guide-row"><dt>Ask</dt><dd>type below to light up the agent's chain of edits</dd></div>
+        </dl>
+      </div>
+    </aside>
+
+    <form id="promptbar" autocomplete="off">
+      <div class="prompt-box">
+        <textarea
+          id="prompt"
+          rows="1"
+          placeholder="Debug an issue or audit a change…"
+        ></textarea>
+        <div class="prompt-actions">
+          <span class="prompt-hint"><kbd>Enter</kbd> to ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</span>
+          <button id="send" type="submit" class="send-btn" aria-label="Ask" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5" /><path d="m5 12 7-7 7 7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

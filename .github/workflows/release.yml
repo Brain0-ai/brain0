@@ -1,0 +1,120 @@
+name: release
+
+# Build the Rust core for every platform, assemble the npm packages (`brain0` +
+# @brain0/cli-<platform>-<arch>), and publish. Publishing is DRY-RUN by default;
+# the real publish runs only when the NPM_TOKEN secret is present AND the workflow
+# was dispatched with publish=true (or a v* tag was pushed with the secret set).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Actually publish to npm (requires NPM_TOKEN secret)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # create the GitHub Release with the tarballs attached
+  id-token: write   # npm --provenance (OIDC-signed publish attestation)
+
+jobs:
+  binaries:
+    strategy:
+      matrix:
+        # darwin-x64 is CROSS-compiled on Apple Silicon: GitHub retired the Intel macOS
+        # runners (macos-13), and macOS toolchains cross-target cleanly.
+        include:
+          - key: linux-x64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - key: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - key: darwin-x64
+            runner: macos-14
+            target: x86_64-apple-darwin
+          - key: darwin-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.key }}
+      - run: cargo build --release -p brain0-cli --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brain0-${{ matrix.key }}
+          path: target/${{ matrix.target }}/release/brain0
+          if-no-files-found: error
+
+  assemble:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - name: Guard — tag must match the package version
+        if: github.event_name == 'push'
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./packages/cli/package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG != packages/cli version $PKG — bump the version or fix the tag"
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - uses: actions/download-artifact@v4
+        with:
+          path: bin-artifacts
+      - name: Assemble npm packages
+        run: |
+          node scripts/release-pack.mjs \
+            --binary linux-x64=bin-artifacts/brain0-linux-x64/brain0 \
+            --binary linux-arm64=bin-artifacts/brain0-linux-arm64/brain0 \
+            --binary darwin-x64=bin-artifacts/brain0-darwin-x64/brain0 \
+            --binary darwin-arm64=bin-artifacts/brain0-darwin-arm64/brain0 \
+            --out dist-npm
+      - name: Publish (dry-run unless explicitly enabled)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DO_PUBLISH: ${{ (github.event_name == 'push' || inputs.publish) && secrets.NPM_TOKEN != '' }}
+        run: |
+          set -e
+          # Real publishes carry npm provenance (OIDC attestation — on brand for brain0).
+          FLAG="--dry-run"
+          if [ "$DO_PUBLISH" = "true" ]; then FLAG="--provenance"; fi
+          echo "publish mode: $FLAG"
+          # npm treats a bare "dir/file.tgz" as a GitHub owner/repo shorthand and tries git
+          # over ssh — the ./ prefix forces local-path resolution.
+          # Platform packages first, the resolver package last.
+          for t in dist-npm/brain0-cli-*.tgz; do
+            npm publish $FLAG --access public "./$t"
+          done
+          for t in dist-npm/brain0-*.tgz; do
+            case "$t" in */brain0-cli-*) continue ;; esac
+            npm publish $FLAG --access public "./$t"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: dist-npm/*.tgz
+      - name: GitHub Release (tag pushes)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist-npm/*.tgz \
+            --title "brain0 $GITHUB_REF_NAME" \
+            --generate-notes

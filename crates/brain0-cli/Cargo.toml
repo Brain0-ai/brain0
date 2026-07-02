@@ -1,0 +1,36 @@
+[package]
+name = "brain0-cli"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "brain0 command-line: passive observer, MCP ingest server, risk recompute"
+
+[[bin]]
+name = "brain0"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+brain0-model.workspace = true
+brain0-identity.workspace = true
+brain0-parser.workspace = true
+brain0-storage.workspace = true
+brain0-observer.workspace = true
+brain0-risk.workspace = true
+brain0-policy.workspace = true
+brain0-attest.workspace = true
+brain0-mcp.workspace = true
+brain0-agentsrc.workspace = true
+brain0-crypto.workspace = true
+brain0-models.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+ureq.workspace = true

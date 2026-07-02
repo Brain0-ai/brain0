@@ -1,0 +1,38 @@
+# cargo-deny configuration (PRD3 §12): fail CI on known vulnerabilities and on
+# disallowed licenses. Run with `cargo deny check`.
+
+[advisories]
+version = 2
+yanked = "deny"
+# Build fails on any security advisory affecting the dependency tree.
+
+[licenses]
+version = 2
+# Permissive licenses compatible with Apache-2.0 distribution.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+    # webpki-roots (Mozilla CA root DATA, via ureq): permissive data license, Apache-compatible.
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Internal workspace crates reference each other by path (no version) — that is not the
+# supply-chain wildcard this lint exists for.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

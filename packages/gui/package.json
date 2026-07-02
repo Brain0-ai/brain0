@@ -1,0 +1,24 @@
+{
+  "name": "@brain0/gui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "brain0 PixiJS GUI: bipartite graph, LOD lens, risk color, timeline, search",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/*.test.js",
+    "lint": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@brain0/shared": "workspace:*",
+    "pixi.js": "^8.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.0",
+    "vite": "^6.0.0"
+  }
+}

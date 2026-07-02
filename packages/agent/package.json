@@ -1,0 +1,30 @@
+{
+  "name": "@brain0/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "brain0 internal RAG-on-graph agent: recency-aware search, embeddings, debug & audit",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -b && node --test --experimental-sqlite dist/*.test.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@brain0/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.0"
+  }
+}

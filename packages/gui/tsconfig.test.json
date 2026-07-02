@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": "src",
+    "outDir": "dist-test",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "noEmit": false
+  },
+  "include": ["src/graph.ts", "src/graph.test.ts"]
+}

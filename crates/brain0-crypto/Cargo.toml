@@ -1,0 +1,19 @@
+[package]
+name = "brain0-crypto"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Envelope encryption and key management for brain0 (at-rest payload protection)"
+
+[lints]
+workspace = true
+
+[dependencies]
+chacha20poly1305 = "0.10"
+getrandom.workspace = true
+hex.workspace = true
+thiserror.workspace = true

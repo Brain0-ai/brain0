@@ -1,0 +1,50 @@
+{
+  "name": "brain0",
+  "version": "0.1.0",
+  "description": "brain0 \u2014 the black box for AI-written code: `npx brain0 up` on any repo",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "brain0": "./bin/brain0.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "vendor",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node -e \"process.exit(0)\"",
+    "typecheck": "node --check bin/brain0.js && node --check src/lib.mjs",
+    "lint": "node --check bin/brain0.js && node --check src/lib.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Brain0-ai/brain0.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Brain0-ai/brain0#readme",
+  "bugs": "https://github.com/Brain0-ai/brain0/issues",
+  "keywords": [
+    "ai",
+    "provenance",
+    "coding-agents",
+    "audit",
+    "dlp",
+    "drift",
+    "git",
+    "claude-code",
+    "codex",
+    "mcp",
+    "attestation",
+    "code-review",
+    "observability"
+  ]
+}

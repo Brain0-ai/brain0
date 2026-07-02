@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Brain0-ai/brain0/security/advisories/new
+    about: Please report security issues privately, never as public issues.

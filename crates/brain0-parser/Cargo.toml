@@ -1,0 +1,24 @@
+[package]
+name = "brain0-parser"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Tree-sitter symbol extraction and structural AST fingerprinting for brain0"
+
+[lints]
+workspace = true
+
+[dependencies]
+brain0-model.workspace = true
+serde.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-rust.workspace = true

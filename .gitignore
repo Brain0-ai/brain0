@@ -1,0 +1,45 @@
+# Rust
+/target
+**/target
+Cargo.lock.orig
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.pnpm-store/
+
+# brain0 local data (index + payload should never be committed)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+/.brain0/
+**/.brain0/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# npm release artifacts (assembled by scripts/release-pack.mjs)
+dist-npm/
+packages/cli/vendor/
+
+# personal editor/agent tooling config (machine-specific, not for the public repo)
+.github/copilot-instructions.md
+
+# agent working memory (build protocol) — local only, never published
+IMPLEMENTATION_PLAN.md
+
+# machine-specific MCP config (absolute paths)
+.mcp.json

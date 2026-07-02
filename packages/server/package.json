@@ -1,0 +1,26 @@
+{
+  "name": "@brain0/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "brain0 HTTP backend for the GUI: serves graph.json and proxies agent debug",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "brain0-server": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -b && node --test dist/*.test.js",
+    "lint": "tsc --noEmit",
+    "start": "node --experimental-sqlite --env-file-if-exists=../../.env dist/server.js"
+  },
+  "dependencies": {
+    "@brain0/shared": "workspace:*",
+    "@brain0/agent": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.0"
+  }
+}

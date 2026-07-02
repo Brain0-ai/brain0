@@ -1,0 +1,52 @@
+name: CLA Assistant
+
+# Enforces the Contributor License Agreement on the public brain0 repo.
+# External (non-founder) contributors must sign the ICLA (or be covered by a CCLA) before their
+# PR can be merged. Founders and bots are exempt via the allowlist below.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    name: Check / record CLA signature
+    runs-on: ubuntu-latest
+    steps:
+      - name: CLA Assistant
+        if: >-
+          (github.event.comment.body == 'recheck' ||
+           github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') ||
+          github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A PAT with write access to the signatures registry repo (keeps signatures out of the
+          # main repo's history). Configure in repo/org secrets — never commit it.
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_SIGNATURES_TOKEN }}
+        with:
+          # The text contributors are agreeing to.
+          path-to-document: 'https://github.com/Brain0-ai/brain0/blob/main/cla/icla.md'
+          # The auditable signature registry (stored in a dedicated private repo).
+          path-to-signatures: 'signatures.json'
+          remote-organization-name: 'Brain0-ai'
+          remote-repository-name: 'brain0-cla-signatures'
+          branch: 'main'
+          # Founders and project bots are exempt from the gate. Keep in sync with
+          # cla/README.md. Replace the founder placeholders with real GitHub usernames.
+          allowlist: 'nicolalessi,AntonioVerdiglione1996,dependabot[bot],github-actions[bot],brain0-bot'
+          # Message shown to a contributor who still needs to sign.
+          custom-notsigned-prcomment: >-
+            Thank you for your contribution! Before we can merge it, please sign the brain0
+            Contributor License Agreement. Read it at cla/icla.md, then comment exactly:
+            **I have read the CLA Document and I hereby sign the CLA**
+          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          custom-allsigned-prcomment: 'All contributors have signed the CLA. ✅'

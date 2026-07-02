@@ -1,0 +1,18 @@
+[package]
+name = "brain0-reconcile"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Declared-vs-done reconciliation for brain0: gap-filling and drift detection"
+
+[lints]
+workspace = true
+
+[dependencies]
+brain0-model.workspace = true
+brain0-storage.workspace = true
+thiserror.workspace = true

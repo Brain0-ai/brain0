@@ -1,0 +1,82 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/brain0-model",
+    "crates/brain0-parser",
+    "crates/brain0-identity",
+    "crates/brain0-storage",
+    "crates/brain0-observer",
+    "crates/brain0-reconcile",
+    "crates/brain0-risk",
+    "crates/brain0-policy",
+    "crates/brain0-attest",
+    "crates/brain0-mcp",
+    "crates/brain0-agentsrc",
+    "crates/brain0-crypto",
+    "crates/brain0-models",
+    "crates/brain0-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+repository = "https://github.com/brain0-dev/brain0"
+authors = ["The brain0 Authors"]
+description = "Passive, incremental decision-graph for AI-assisted software development"
+
+# Centralized dependency versions. Member crates opt in with `<dep>.workspace = true`.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+thiserror = "2"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+tree-sitter = "0.25"
+tree-sitter-python = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-rust = "0.23"
+rusqlite = { version = "0.32", features = ["bundled"] }
+notify = "6"
+walkdir = "2"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+regex = "1"
+chacha20poly1305 = "0.10"
+ed25519-dalek = "2"
+getrandom = "0.2"
+hex = "0.4"
+ureq = { version = "2", features = ["json"] }
+
+# Internal crates
+brain0-model = { path = "crates/brain0-model" }
+brain0-parser = { path = "crates/brain0-parser" }
+brain0-identity = { path = "crates/brain0-identity" }
+brain0-storage = { path = "crates/brain0-storage" }
+brain0-observer = { path = "crates/brain0-observer" }
+brain0-reconcile = { path = "crates/brain0-reconcile" }
+brain0-risk = { path = "crates/brain0-risk" }
+brain0-policy = { path = "crates/brain0-policy" }
+brain0-attest = { path = "crates/brain0-attest" }
+brain0-mcp = { path = "crates/brain0-mcp" }
+brain0-agentsrc = { path = "crates/brain0-agentsrc" }
+brain0-crypto = { path = "crates/brain0-crypto" }
+brain0-models = { path = "crates/brain0-models" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Pedantic is opt-in but we keep the high-signal ones.
+todo = "warn"
+dbg_macro = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,33 @@
+[package]
+name = "brain0-storage"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Abstract append-only storage for brain0 (open core: Storage trait + SQLite/sqlite-vec)"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Enables full SQLite database encryption via SQLCipher (needs the SQLCipher/OpenSSL
+# toolchain to build). Off by default; the heavy-sensitivity payload is encrypted regardless
+# via EncryptedPayloadStore. (The Postgres backend lives in the private brain0-enterprise repo.)
+sqlcipher = ["rusqlite/bundled-sqlcipher"]
+
+[dependencies]
+brain0-model.workspace = true
+brain0-crypto.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+brain0-model.workspace = true
+chrono.workspace = true

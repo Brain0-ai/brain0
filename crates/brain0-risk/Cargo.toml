@@ -1,0 +1,19 @@
+[package]
+name = "brain0-risk"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Two-score risk engine for brain0 (a-priori + a-posteriori, fused into one color)"
+
+[lints]
+workspace = true
+
+[dependencies]
+brain0-model.workspace = true
+brain0-storage.workspace = true
+thiserror.workspace = true
+chrono.workspace = true

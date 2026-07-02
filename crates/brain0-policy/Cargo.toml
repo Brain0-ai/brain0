@@ -1,0 +1,16 @@
+[package]
+name = "brain0-policy"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "brain0 DLP/egress policy engine: flag sensitive/secret reads that reached a model"
+
+[lints]
+workspace = true
+
+[dependencies]
+regex.workspace = true

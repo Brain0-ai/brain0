@@ -1,0 +1,19 @@
+[package]
+name = "brain0-attest"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "brain0 signed AI-provenance attestations (Ed25519 over an in-toto statement)"
+
+[lints]
+workspace = true
+
+[dependencies]
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+thiserror.workspace = true
