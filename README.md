@@ -23,6 +23,10 @@ what the agent **read** to write it, and whether you can trust it.
 [Give your agent memory](#give-your-agent-the-why-layer-mcp) · [How it works](#how-it-works) ·
 [Comparison](#how-it-compares) · [Docs](./docs)
 
+<br/>
+
+<img alt="brain0 — the decision graph of a repository: click any node to read its intent, risk and dated history" src="docs/assets/brain0-demo.gif" width="900">
+
 </div>
 
 ---
