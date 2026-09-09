@@ -37,14 +37,23 @@ Record kinds (`type`):
 **Declared changes** derive from `function_call`: `apply_patch` (parse patch headers for paths) and
 `exec_command` (shell that may touch files).
 
+**Reads** derive from `exec_command` / `shell` / `local_shell`: `arguments.command` is a string or
+an argv array (`["bash","-lc","<script>"]`), parsed best-effort for reader commands
+(`crates/brain0-agentsrc/src/shell.rs`). The matching `function_call_output` (by `call_id`) carries
+what the model saw: a plain string, or a JSON envelope `{"output": "...", "metadata": {...}}`. That
+content is secret-scanned at ingest and never stored.
+
 ## Claude Code (`~/.claude/projects`)
 
 Layout:
 
 ```
 ~/.claude/projects/<ENCODED_CWD>/
-  <sessionId>.jsonl     # append-only JSONL, one session per file (filename = session UUID)
-  memory/               # per-project persistent memory
+  <sessionId>.jsonl                      # append-only JSONL, one session per file (filename = session UUID)
+  <sessionId>/subagents/agent-<id>.jsonl # one transcript per subagent (same sessionId + cwd, isSidechain: true)
+  <sessionId>/subagents/agent-<id>.meta.json
+  <sessionId>/tool-results/<id>.txt      # tool results too large to inline (the JSONL keeps a 2 KB preview)
+  memory/                                # per-project persistent memory
 ```
 
 `ENCODED_CWD` = the project's absolute path with `/` replaced by `-`
@@ -63,6 +72,18 @@ Each JSONL line is a record with top-level keys including:
 
 **Declared changes** derive from `tool_use`: `name ∈ {Edit, Write, MultiEdit, NotebookEdit}` →
 `input.file_path`; `name == "Bash"` → `input.command`.
+
+**Reads** derive from `tool_use`: `Read` → `input.file_path`; `NotebookRead` →
+`input.notebook_path`; `Grep` with `input.output_mode == "content"` → `input.path` (the repo root
+when absent); `Bash` → `input.command` parsed best-effort for reader commands
+(`crates/brain0-agentsrc/src/shell.rs`). The content the model saw comes from the matching
+`tool_result` (by `tool_use_id`) in the next `user` record, plus that record's top-level
+`toolUseResult` (`stdout`/`stderr` for Bash, `file.content` for Read), which stays complete even
+when the inline content is a `<persisted-output>` preview pointing at `tool-results/<id>.txt`
+(loaded as a fallback, up to 16 MB). Scanned at ingest, never stored.
+
+Subagent transcripts under `<sessionId>/subagents/` are discovered like sessions (walk depth 4);
+they carry the parent `sessionId`, so their turns merge into the parent task.
 
 ## Notes for adapters
 

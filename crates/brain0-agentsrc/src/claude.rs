@@ -1,5 +1,6 @@
-//! Claude Code adapter: `~/.claude/projects/<ENCODED_CWD>/<sessionId>.jsonl` + per-project
-//! `memory/`. See `docs/agent-artifacts.md` for the observed schema.
+//! Claude Code adapter: `~/.claude/projects/<ENCODED_CWD>/<sessionId>.jsonl`, the subagent
+//! transcripts under `<sessionId>/subagents/`, and the per-project `memory/`. See
+//! `docs/agent-artifacts.md` for the observed schema.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -11,10 +12,15 @@ use walkdir::WalkDir;
 use crate::event::{CapturedRead, IncrementalRead, Provenance, SessionFile, ToolCall, Turn};
 use crate::jsonl::read_complete_lines;
 use crate::scope::ProjectScope;
+use crate::shell::read_paths_from_command;
 use crate::source::AgentArtifactSource;
 use crate::Result;
 
 const NAME: &str = "claude-code";
+
+/// Upper bound on a spilled tool result (`<sessionId>/tool-results/<id>.txt`) we will load back
+/// for secret scanning. Untrusted input; larger files are scanned only through their preview.
+const MAX_SPILLED_RESULT_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct ClaudeSource {
@@ -82,11 +88,23 @@ fn parse_tool_use(part: &Value) -> Option<ToolCall> {
                 read_paths.push(p.to_owned());
             }
         }
+        // A shell read (`cat .env`, `sed -n …`, `grep -rn … src/`) puts file content in front
+        // of the model exactly like `Read` does; the command line is parsed best-effort.
         "Bash" => {
             command = input
                 .get("command")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            if let Some(c) = &command {
+                read_paths = read_paths_from_command(c);
+            }
+        }
+        // `Grep` in content mode returns matching lines: a (partial) read of everything under
+        // its target, the repo root when no path is given.
+        "Grep" => {
+            if let Some(p) = grep_content_target(&input) {
+                read_paths.push(p);
+            }
         }
         _ => {}
     }
@@ -98,20 +116,70 @@ fn parse_tool_use(part: &Value) -> Option<ToolCall> {
     })
 }
 
-/// The path a Read/NotebookRead tool_use targets (for matching its later tool_result).
-fn read_path_of(part: &Value) -> Option<String> {
-    let input = part.get("input")?;
-    match part.get("name")?.as_str()? {
-        "Read" => input
-            .get("file_path")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        "NotebookRead" => input
-            .get("notebook_path")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        _ => None,
+/// The target of a `Grep` tool call whose result carries file content (`output_mode:
+/// "content"`); `files_with_matches` / `count` modes expose paths only, not content.
+fn grep_content_target(input: &Value) -> Option<String> {
+    if input.get("output_mode").and_then(Value::as_str) != Some("content") {
+        return None;
     }
+    Some(
+        input
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|p| !p.is_empty())
+            .unwrap_or(".")
+            .to_owned(),
+    )
+}
+
+/// The paths a tool_use reads (for matching its later tool_result, whose content is what the
+/// model saw). A shell command may read several files; its single output is attributed to each.
+fn read_paths_of(part: &Value) -> Vec<String> {
+    parse_tool_use(part)
+        .map(|tc| tc.read_paths)
+        .unwrap_or_default()
+}
+
+/// The full text of a tool result as the model saw it. Large results are spilled to
+/// `<sessionId>/tool-results/<id>.txt` with only a preview inline; the record's top-level
+/// `toolUseResult` (stdout / file content) still carries the full text, and the spilled file
+/// is loaded as a fallback. Everything here is transient: scanned for secrets, never stored.
+fn tool_result_text(record: &Value, part: &Value) -> String {
+    let mut text = text_of(part.get("content"));
+    if let Some(full) = record.get("toolUseResult") {
+        for field in [
+            full.get("stdout"),
+            full.get("stderr"),
+            full.get("file").and_then(|f| f.get("content")),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        {
+            text.push('\n');
+            text.push_str(field);
+        }
+    }
+    if let Some(path) = spilled_result_path(&text) {
+        if std::fs::metadata(&path)
+            .is_ok_and(|m| m.is_file() && m.len() <= MAX_SPILLED_RESULT_BYTES)
+        {
+            if let Ok(full) = std::fs::read_to_string(&path) {
+                text.push('\n');
+                text.push_str(&full);
+            }
+        }
+    }
+    text
+}
+
+/// The `Full output saved to: <path>` reference inside a `<persisted-output>` preview.
+fn spilled_result_path(text: &str) -> Option<PathBuf> {
+    let marker = "Full output saved to: ";
+    let start = text.find("<persisted-output>")?;
+    let rest = &text[start..];
+    let path = rest.split_once(marker)?.1.lines().next()?.trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 /// Read the cwd + session id from the first records of a session file.
@@ -145,8 +213,11 @@ impl AgentArtifactSource for ClaudeSource {
             if !root.exists() {
                 continue;
             }
+            // Depth 2: `<project>/<sessionId>.jsonl`. Depth 4: the subagent transcripts
+            // `<project>/<sessionId>/subagents/agent-<id>.jsonl`, whose reads reach a model just
+            // the same (they carry the parent `sessionId` + `cwd`, so they merge into its task).
             for entry in WalkDir::new(root)
-                .max_depth(2)
+                .max_depth(4)
                 .into_iter()
                 .filter_map(std::result::Result::ok)
             {
@@ -173,9 +244,9 @@ impl AgentArtifactSource for ClaudeSource {
         let mut turns = Vec::new();
         let mut current: Option<Turn> = None;
         let file = session.path.to_string_lossy().to_string();
-        // Read tool_use id → path, so the later tool_result (the file content the model saw) can be
-        // attached to the turn for secret-scanning. Reset per turn.
-        let mut read_calls: HashMap<String, String> = HashMap::new();
+        // Reading tool_use id → paths, so the later tool_result (the file content the model saw)
+        // can be attached to the turn for secret-scanning. Reset per turn.
+        let mut read_calls: HashMap<String, Vec<String>> = HashMap::new();
 
         let flush = |turns: &mut Vec<Turn>, current: &mut Option<Turn>| {
             if let Some(mut turn) = current.take() {
@@ -205,13 +276,15 @@ impl AgentArtifactSource for ClaudeSource {
                             let Some(id) = part.get("tool_use_id").and_then(Value::as_str) else {
                                 continue;
                             };
-                            if let Some(path) = read_calls.get(id) {
-                                let result = text_of(part.get("content"));
+                            if let Some(paths) = read_calls.get(id) {
+                                let result = tool_result_text(&v, part);
                                 if !result.is_empty() {
-                                    turn.read_contents.push(CapturedRead {
-                                        path: path.clone(),
-                                        content: result,
-                                    });
+                                    for path in paths {
+                                        turn.read_contents.push(CapturedRead {
+                                            path: path.clone(),
+                                            content: result.clone(),
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -262,12 +335,14 @@ impl AgentArtifactSource for ClaudeSource {
                                         if let Some(tc) = parse_tool_use(part) {
                                             turn.tool_calls.push(tc);
                                         }
-                                        // Remember Read calls by id → path for tool_result matching.
-                                        if let (Some(id), Some(path)) = (
+                                        // Remember reading calls by id → paths for tool_result
+                                        // matching (Read, NotebookRead, Grep, shell reads).
+                                        let paths = read_paths_of(part);
+                                        if let (Some(id), false) = (
                                             part.get("id").and_then(Value::as_str),
-                                            read_path_of(part),
+                                            paths.is_empty(),
                                         ) {
-                                            read_calls.insert(id.to_owned(), path);
+                                            read_calls.insert(id.to_owned(), paths);
                                         }
                                     }
                                     _ => {}
@@ -380,6 +455,147 @@ mod tests {
         let other = ProjectScope::project(Path::new("/home/nicola/progetti/elsewhere"));
         assert!(source.sessions(&other).unwrap().is_empty());
 
+        let _ = std::fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn shell_and_grep_reads_are_captured_with_the_content_the_model_saw() {
+        let projects =
+            std::env::temp_dir().join(format!("brain0-claude-sh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&projects);
+        std::fs::create_dir_all(&projects).unwrap();
+        write_session(
+            &projects,
+            "-home-nicola-progetti-demo",
+            "sess2.jsonl",
+            &[
+                r#"{"type":"user","cwd":"/home/nicola/progetti/demo","sessionId":"sess2","timestamp":"2026-06-06T10:00:00.000Z","message":{"role":"user","content":"check the config"}}"#,
+                // Reads through the shell and through Grep (content mode) reach the model like
+                // `Read` does; `ls` is not a read; `Grep` in files_with_matches mode returns no content.
+                r#"{"type":"assistant","cwd":"/home/nicola/progetti/demo","sessionId":"sess2","timestamp":"2026-06-06T10:00:01.000Z","message":{"role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"cat .env | head -3"}},{"type":"tool_use","id":"b2","name":"Bash","input":{"command":"ls -la"}},{"type":"tool_use","id":"g1","name":"Grep","input":{"pattern":"KEY","path":"/home/nicola/progetti/demo/config","output_mode":"content"}},{"type":"tool_use","id":"g2","name":"Grep","input":{"pattern":"KEY"}}]}}"#,
+                // The inline content is only a preview; the harness keeps the full stdout in
+                // `toolUseResult`, which is where the secret actually is.
+                r#"{"type":"user","cwd":"/home/nicola/progetti/demo","sessionId":"sess2","timestamp":"2026-06-06T10:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b1","content":"DB_HOST=localhost"}]},"toolUseResult":{"stdout":"DB_HOST=localhost\nAWS_KEY=AKIAIOSFODNN7EXAMPLE","stderr":""}}"#,
+                r#"{"type":"user","cwd":"/home/nicola/progetti/demo","sessionId":"sess2","timestamp":"2026-06-06T10:00:03.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"g1","content":"config/app.py:3:KEY = 'x'"}]}}"#,
+            ],
+        );
+
+        let source = ClaudeSource::new(&projects);
+        let scope = ProjectScope::project(Path::new("/home/nicola/progetti/demo"));
+        let sessions = source.sessions(&scope).unwrap();
+        let read = source.read_incremental(&sessions[0], 0).unwrap();
+        let turn = &read.turns[0];
+        assert_eq!(
+            turn.read_paths(),
+            vec![".env".to_owned(), "config".to_owned()]
+        );
+        assert!(turn
+            .tool_calls
+            .iter()
+            .any(|tc| tc.name == "Bash" && tc.read_paths.is_empty()));
+
+        let contents = turn.reads_with_content();
+        let env = contents
+            .iter()
+            .find(|(p, _)| p == ".env")
+            .expect("shell read content");
+        assert!(
+            env.1.contains("AKIAIOSFODNN7EXAMPLE"),
+            "full stdout from toolUseResult"
+        );
+        let cfg = contents
+            .iter()
+            .find(|(p, _)| p == "config")
+            .expect("grep content");
+        assert!(cfg.1.contains("KEY = 'x'"));
+        let _ = std::fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn spilled_tool_results_are_loaded_from_disk_for_scanning() {
+        let projects =
+            std::env::temp_dir().join(format!("brain0-claude-spill-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&projects);
+        let results = projects.join("-home-nicola-progetti-demo/sess3/tool-results");
+        std::fs::create_dir_all(&results).unwrap();
+        let spilled = results.join("abc.txt");
+        std::fs::write(&spilled, "line1\nTOKEN=AKIAIOSFODNN7EXAMPLE\n").unwrap();
+        let preview = format!(
+            "<persisted-output>\nOutput too large (30KB). Full output saved to: {}\n\nPreview (first 2KB):\nline1",
+            spilled.display()
+        );
+        let record = serde_json::json!({
+            "type": "user", "cwd": "/home/nicola/progetti/demo", "sessionId": "sess3",
+            "timestamp": "2026-06-06T10:00:02.000Z",
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "b1", "content": preview}]}
+        })
+        .to_string();
+        write_session(
+            &projects,
+            "-home-nicola-progetti-demo",
+            "sess3.jsonl",
+            &[
+                r#"{"type":"user","cwd":"/home/nicola/progetti/demo","sessionId":"sess3","timestamp":"2026-06-06T10:00:00.000Z","message":{"role":"user","content":"dump"}}"#,
+                r#"{"type":"assistant","cwd":"/home/nicola/progetti/demo","sessionId":"sess3","timestamp":"2026-06-06T10:00:01.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"cat big.log"}}]}}"#,
+                &record,
+            ],
+        );
+        let source = ClaudeSource::new(&projects);
+        let scope = ProjectScope::project(Path::new("/home/nicola/progetti/demo"));
+        let sessions = source.sessions(&scope).unwrap();
+        let session = sessions.iter().find(|s| s.session_id == "sess3").unwrap();
+        let read = source.read_incremental(session, 0).unwrap();
+        let contents = read.turns[0].reads_with_content();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].0, "big.log");
+        assert!(
+            contents[0].1.contains("AKIAIOSFODNN7EXAMPLE"),
+            "spilled content loaded"
+        );
+        let _ = std::fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn subagent_transcripts_are_discovered_under_the_session_directory() {
+        let projects =
+            std::env::temp_dir().join(format!("brain0-claude-sub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&projects);
+        std::fs::create_dir_all(&projects).unwrap();
+        write_session(
+            &projects,
+            "-home-nicola-progetti-demo",
+            "sess4.jsonl",
+            &[
+                r#"{"type":"user","cwd":"/home/nicola/progetti/demo","sessionId":"sess4","timestamp":"2026-06-06T10:00:00.000Z","message":{"role":"user","content":"explore"}}"#,
+            ],
+        );
+        write_session(
+            &projects,
+            "-home-nicola-progetti-demo/sess4/subagents",
+            "agent-a1b2.jsonl",
+            &[
+                r#"{"type":"user","isSidechain":true,"agentId":"a1b2","cwd":"/home/nicola/progetti/demo","sessionId":"sess4","timestamp":"2026-06-06T10:00:05.000Z","message":{"role":"user","content":"find the db config"}}"#,
+                r#"{"type":"assistant","isSidechain":true,"agentId":"a1b2","cwd":"/home/nicola/progetti/demo","sessionId":"sess4","timestamp":"2026-06-06T10:00:06.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/home/nicola/progetti/demo/.env"}}]}}"#,
+            ],
+        );
+        // Unrelated files under the session directory are not transcripts.
+        let tr = projects.join("-home-nicola-progetti-demo/sess4/tool-results");
+        std::fs::create_dir_all(&tr).unwrap();
+        std::fs::write(tr.join("x.txt"), "not a transcript").unwrap();
+
+        let source = ClaudeSource::new(&projects);
+        let scope = ProjectScope::project(Path::new("/home/nicola/progetti/demo"));
+        let mut sessions = source.sessions(&scope).unwrap();
+        sessions.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(sessions.len(), 2, "main session + its subagent transcript");
+        // The subagent carries the parent session id, so its turns merge into the same task.
+        assert!(sessions.iter().all(|s| s.session_id == "sess4"));
+        let sub = sessions
+            .iter()
+            .find(|s| s.path.ends_with("agent-a1b2.jsonl"))
+            .unwrap();
+        let read = source.read_incremental(sub, 0).unwrap();
+        assert_eq!(read.turns[0].read_paths(), vec![".env".to_owned()]);
         let _ = std::fs::remove_dir_all(&projects);
     }
 }

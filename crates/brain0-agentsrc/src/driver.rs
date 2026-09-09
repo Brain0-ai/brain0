@@ -269,6 +269,7 @@ pub fn run_ingest_reporting(
     let mut planned: Vec<(
         &str,
         crate::event::SessionFile,
+        u64,
         crate::event::IncrementalRead,
     )> = Vec::new();
     for source in registry.sources() {
@@ -283,15 +284,15 @@ pub fn run_ingest_reporting(
             }
             let cursor = storage.get_cursor(adapter, &file_key)?.unwrap_or(0);
             let read = source.read_incremental(&session, cursor)?;
-            planned.push((adapter, session, read));
+            planned.push((adapter, session, cursor, read));
         }
     }
-    let total_turns: usize = planned.iter().map(|(_, _, read)| read.turns.len()).sum();
+    let total_turns: usize = planned.iter().map(|(_, _, _, read)| read.turns.len()).sum();
     progress.on_plan(planned.len(), total_turns);
 
     // Phase 2 — process each planned session.
     let mut done_turns = 0usize;
-    for (adapter, session, read) in &planned {
+    for (adapter, session, from, read) in &planned {
         let adapter = *adapter;
         let file_key = session.path.to_string_lossy().into_owned();
         stats.sessions += 1;
@@ -310,6 +311,17 @@ pub fn run_ingest_reporting(
             progress.on_turn(done_turns, total_turns);
         }
         storage.set_cursor(adapter, &file_key, read.new_offset)?;
+        if read.new_offset > *from {
+            // Tamper evidence for the single-source read set: pin the exact transcript bytes this
+            // pass consumed, so `verify` can prove they are still what was ingested.
+            crate::integrity::record_ingest(
+                storage,
+                adapter,
+                &session.path,
+                *from,
+                read.new_offset,
+            )?;
+        }
         if redactions > 0 {
             // Audit the fact that secrets were redacted — kinds/counts only, never values.
             storage.append_audit(

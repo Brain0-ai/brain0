@@ -54,6 +54,34 @@ pub fn read_complete_lines(path: &Path, from: u64) -> Result<(Vec<Line>, u64)> {
     Ok((lines, from + consumed as u64))
 }
 
+/// BLAKE3 hex digest of the bytes `[from, to)` of `path`, the exact range an ingest pass
+/// consumed. Recorded in the audit log so `brain0 verify` can later prove the transcript
+/// range is still what was ingested (tamper evidence for the single-source read set).
+pub fn hash_range(path: &Path, from: u64, to: u64) -> Result<String> {
+    let mut file = File::open(path)?;
+    let len = to.saturating_sub(from);
+    file.seek(SeekFrom::Start(from))?;
+    let mut hasher = blake3::Hasher::new();
+    let mut remaining = len;
+    let mut buf = vec![0u8; 64 * 1024];
+    while remaining > 0 {
+        let want = usize::try_from(remaining.min(buf.len() as u64)).unwrap_or(buf.len());
+        let n = file.read(&mut buf[..want])?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        remaining -= n as u64;
+    }
+    if remaining > 0 {
+        return Err(crate::AgentSrcError::Parse(format!(
+            "transcript shorter than the ingested range: {} bytes missing",
+            remaining
+        )));
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

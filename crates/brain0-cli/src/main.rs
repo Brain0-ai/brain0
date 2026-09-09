@@ -887,8 +887,35 @@ fn cmd_verify(db: &Path, payload: &Path, key_file: &Path, encrypt: bool) -> Resu
         }
     }
     println!("integrity: {ok} ok, {corrupt} corrupt, {missing} missing/purged");
+
+    // Transcript ranges pinned at ingest (the single source of reads + declared changes): a
+    // rewrite or truncation after ingest is tamper evidence; a pruned file is only informational.
+    use brain0_agentsrc::{verify_transcripts, TranscriptStatus};
+    let mut t_ok = 0usize;
+    let mut t_changed = 0usize;
+    let mut t_missing = 0usize;
+    for check in verify_transcripts(&storage)? {
+        match check.status {
+            TranscriptStatus::Ok => t_ok += 1,
+            TranscriptStatus::Changed => {
+                t_changed += 1;
+                eprintln!(
+                    "CHANGED: {} [{}..{}] ({}) — transcript differs from what was ingested",
+                    check.file.display(),
+                    check.from,
+                    check.to,
+                    check.adapter
+                );
+            }
+            TranscriptStatus::Missing => t_missing += 1,
+        }
+    }
+    println!("transcripts: {t_ok} ok, {t_changed} changed, {t_missing} missing/pruned");
     if corrupt > 0 {
         anyhow::bail!("{corrupt} payload(s) failed integrity verification");
+    }
+    if t_changed > 0 {
+        anyhow::bail!("{t_changed} ingested transcript range(s) changed after ingest");
     }
     Ok(())
 }

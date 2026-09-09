@@ -116,7 +116,10 @@ drift — declared vs done (41)
 
 ### ② Sensitive reads: DLP for agent context
 brain0 records which files each session **read** (paths and secret *kinds* only, never
-values), so you know what reached a possibly-remote model:
+values): explicit `Read` calls, `Grep` results, shell reads such as `cat .env` or `sed -n`,
+and subagent transcripts, with the returned content scanned for secrets at ingest. The read
+set comes from one source (the transcript the agent harness writes), so read it as a **lower
+bound** of what reached a possibly-remote model, not a proof:
 
 ```
 sensitive reads — DLP (7)
@@ -261,6 +264,11 @@ docs/        Documentation (agent-artifact schemas, security, models, open-core,
   crypto-shred purge) with restrictive file permissions.
 - **Append-only, content-addressed**: the graph is tamper-evident (`brain0 verify`), with
   an append-only security audit log.
+- **Reads are single-source, and pinned**: git is an independent witness for what agents
+  *wrote*; nothing plays that role for what they *read*, which comes only from the harness
+  transcript. brain0 pins every ingested transcript range (BLAKE3 in the audit log) and
+  `brain0 verify` re-checks it, so a transcript altered *after* ingest is caught; one altered
+  before ingest is not. What a fact-side source would take: [`docs/governance.md`](./docs/governance.md).
 
 Threat model and honest limitations: [`docs/security.md`](./docs/security.md).
 

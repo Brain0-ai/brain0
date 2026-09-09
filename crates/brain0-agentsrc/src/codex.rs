@@ -1,15 +1,17 @@
 //! Codex adapter: `~/.codex/sessions/<Y>/<M>/<D>/rollout-*.jsonl` + `~/.codex/memories`.
 //! See `docs/agent-artifacts.md` for the observed schema.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use brain0_model::Timestamp;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-use crate::event::{IncrementalRead, Provenance, SessionFile, ToolCall, Turn};
+use crate::event::{CapturedRead, IncrementalRead, Provenance, SessionFile, ToolCall, Turn};
 use crate::jsonl::read_complete_lines;
 use crate::scope::ProjectScope;
+use crate::shell::read_paths_from_command;
 use crate::source::AgentArtifactSource;
 use crate::Result;
 
@@ -68,6 +70,7 @@ fn parse_function_call(payload: &Value) -> Option<ToolCall> {
 
     let mut declared_paths = Vec::new();
     let mut command = None;
+    let mut read_paths = Vec::new();
     match name.as_str() {
         "apply_patch" => {
             let patch = args
@@ -76,22 +79,67 @@ fn parse_function_call(payload: &Value) -> Option<ToolCall> {
                 .unwrap_or(args_str);
             declared_paths = paths_from_patch(patch);
         }
+        // Codex reads files through the shell (`cat`, `sed -n`, `grep`): those reads put file
+        // content in front of the model, so the command line is parsed best-effort for them.
         "exec_command" | "shell" | "bash" | "local_shell" => {
             command = args
                 .get("command")
-                .map(|c| c.to_string())
-                .or_else(|| args.get("cmd").map(|c| c.to_string()));
+                .or_else(|| args.get("cmd"))
+                .and_then(command_text);
+            if let Some(c) = &command {
+                read_paths = read_paths_from_command(c);
+            }
         }
         _ => {}
     }
     Some(ToolCall {
         name,
         declared_paths,
-        // Codex reads files via shell (cat/sed), which is not reliably parseable, so reads are not
-        // captured here yet; the field stays empty rather than guessing.
-        read_paths: Vec::new(),
+        read_paths,
         command,
     })
+}
+
+/// The shell text of a Codex command argument: a plain string, or an argv array
+/// (`["bash", "-lc", "cat .env"]` → the script; otherwise the words joined).
+fn command_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.clone()),
+        Value::Array(items) => {
+            let words: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+            if words.is_empty() {
+                return None;
+            }
+            let is_shell = words.first().is_some_and(|w| {
+                matches!(w.rsplit('/').next(), Some("sh" | "bash" | "zsh" | "dash"))
+            });
+            if is_shell && words.len() >= 3 && words[1].starts_with('-') && words[1].contains('c') {
+                return Some(words[2..].join(" "));
+            }
+            Some(words.join(" "))
+        }
+        _ => None,
+    }
+}
+
+/// The text a `function_call_output` returned to the model: a plain string, or the JSON
+/// envelope `{"output": "...", "metadata": {...}}` newer Codex versions write.
+fn output_text(payload: &Value) -> String {
+    match payload.get("output") {
+        Some(Value::String(s)) => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Object(obj)) => obj
+                .get("output")
+                .and_then(Value::as_str)
+                .map_or_else(|| s.clone(), str::to_owned),
+            _ => s.clone(),
+        },
+        Some(Value::Object(obj)) => obj
+            .get("output")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
 }
 
 /// Read the session id + cwd from the `session_meta` record (first lines).
@@ -153,6 +201,9 @@ impl AgentArtifactSource for CodexSource {
         let mut current: Option<Turn> = None;
         let mut last_ts: Option<Timestamp> = None;
         let file = session.path.to_string_lossy().to_string();
+        // Reading call_id → paths, so the later `function_call_output` (what the model saw) can be
+        // attached to the turn for secret scanning. Reset per turn.
+        let mut read_calls: HashMap<String, Vec<String>> = HashMap::new();
 
         let flush = |turns: &mut Vec<Turn>, current: &mut Option<Turn>| {
             if let Some(mut turn) = current.take() {
@@ -180,6 +231,7 @@ impl AgentArtifactSource for CodexSource {
                     let text = collect_text(payload.get("content"));
                     if role == "user" {
                         flush(&mut turns, &mut current);
+                        read_calls.clear();
                         current = Some(Turn {
                             session_id: session.session_id.clone(),
                             cwd: session.cwd.clone(),
@@ -194,7 +246,6 @@ impl AgentArtifactSource for CodexSource {
                                 file: file.clone(),
                                 byte_offset: line.offset,
                             },
-                            // Codex reads files via shell; no clean tool_result to capture yet.
                             read_contents: Vec::new(),
                         });
                     } else if role == "assistant" {
@@ -209,7 +260,32 @@ impl AgentArtifactSource for CodexSource {
                 Some("function_call") => {
                     if let (Some(turn), Some(tc)) = (current.as_mut(), parse_function_call(payload))
                     {
+                        if let (Some(id), false) = (
+                            payload.get("call_id").and_then(Value::as_str),
+                            tc.read_paths.is_empty(),
+                        ) {
+                            read_calls.insert(id.to_owned(), tc.read_paths.clone());
+                        }
                         turn.tool_calls.push(tc);
+                    }
+                }
+                Some("function_call_output") => {
+                    if let (Some(turn), Some(paths)) = (
+                        current.as_mut(),
+                        payload
+                            .get("call_id")
+                            .and_then(Value::as_str)
+                            .and_then(|id| read_calls.get(id)),
+                    ) {
+                        let content = output_text(payload);
+                        if !content.is_empty() {
+                            for path in paths {
+                                turn.read_contents.push(CapturedRead {
+                                    path: path.clone(),
+                                    content: content.clone(),
+                                });
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -315,6 +391,45 @@ mod tests {
         let other = ProjectScope::project(Path::new("/home/nicola/progetti/other"));
         assert!(source.sessions(&other).unwrap().is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shell_reads_and_their_output_are_captured() {
+        let dir = std::env::temp_dir().join(format!("brain0-codex-sh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write_session(
+            &dir,
+            "rollout-2026-06-06T11-00-00-def.jsonl",
+            &[
+                r#"{"timestamp":"2026-06-06T11:00:00.000Z","type":"session_meta","payload":{"id":"sess-def","cwd":"/home/nicola/progetti/demo"}}"#,
+                r#"{"timestamp":"2026-06-06T11:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"show me the env"}]}}"#,
+                // argv form (`bash -lc <script>`) and a JSON-envelope output, as newer Codex writes.
+                r#"{"timestamp":"2026-06-06T11:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"c1","arguments":"{\"command\":[\"bash\",\"-lc\",\"cat .env && sed -n 1,5p src/app.py\"]}"}}"#,
+                r#"{"timestamp":"2026-06-06T11:00:03.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"output\":\"AWS=AKIAIOSFODNN7EXAMPLE\\nimport os\",\"metadata\":{\"exit_code\":0}}"}}"#,
+                // Plain-string command form, not a read.
+                r#"{"timestamp":"2026-06-06T11:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"c2","arguments":"{\"command\":\"ls -la\"}"}}"#,
+            ],
+        );
+        let source = CodexSource::new(&dir);
+        let scope = ProjectScope::project(Path::new("/home/nicola/progetti/demo"));
+        let sessions = source.sessions(&scope).unwrap();
+        let read = source.read_incremental(&sessions[0], 0).unwrap();
+        let turn = &read.turns[0];
+        assert_eq!(
+            turn.read_paths(),
+            vec![".env".to_owned(), "src/app.py".to_owned()]
+        );
+        assert_eq!(
+            turn.tool_calls[0].command.as_deref(),
+            Some("cat .env && sed -n 1,5p src/app.py")
+        );
+        let contents = turn.reads_with_content();
+        assert_eq!(contents.len(), 2, "one output attributed to each file read");
+        assert!(contents
+            .iter()
+            .all(|(_, c)| c.contains("AKIAIOSFODNN7EXAMPLE")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

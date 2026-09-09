@@ -64,6 +64,10 @@ The driver redacts each turn before payload write, summary, or embedding.
   nodes). Lives in brain0-enterprise alongside the Postgres schema.
 - **Integrity & audit** — `verify_payload` (content-addressed) + CLI `verify`; append-only
   `audit_log` + CLI `audit` (records redactions and purges, never values).
+- **Transcript pinning** — `brain0-agentsrc` `integrity.rs`: each ingest pass appends an `ingest`
+  audit event (adapter, byte range, BLAKE3 of the consumed bytes); CLI `verify` re-hashes every
+  pinned range and fails on a rewritten or truncated transcript (`CHANGED`), reporting pruned
+  ones. Digests only, never transcript content.
 - **Purge / crypto-shred** — `PayloadStore::shred` destroys the blob (its only wrapped DEK ⇒
   irrecoverable); `payload_purged` tombstone keeps the graph topology; derived embeddings are
   invalidated. CLI `purge --task` and retention `--older-than-days`.
@@ -73,6 +77,11 @@ The driver redacts each turn before payload write, summary, or embedding.
 
 ## Honest limitations / follow-ups
 
+- **Reads and declared changes are single-source.** Both come from the transcript the agent
+  harness writes; git independently witnesses *writes* (drift), nothing independently witnesses
+  *reads*. The read set is a lower bound of what reached the model; transcript pinning catches
+  alteration after ingest, not before. Coverage and the fact-side options are documented in
+  [`governance.md`](./governance.md#what-the-read-set-is-and-is-not).
 - The **PostgreSQL** backend, TLS, and RLS live in brain0-enterprise; the open-core repo keeps
   only the backend-agnostic `require_tls` policy helper. Live enforcement requires a running
   server.

@@ -28,6 +28,57 @@ The policy ([`brain0-policy`](../crates/brain0-policy)) evaluates each read and 
 
 Configure the sensitive globs with `BRAIN0_DLP_GLOBS` (comma-separated; added to the defaults).
 
+## What the read set is, and is not
+
+brain0's architecture has two independent sources on the **write** side: the transcript says what
+the agent *declared* it changed, git says what *actually* changed, and drift scores the gap. The
+**read** side has no such second witness. The read set is **single-source by construction**: it
+comes from the transcript the agent harness writes to disk, and from nothing else. Keep three
+things in mind when you read a DLP finding:
+
+1. **It is a harness log, not the model's narrative.** The JSONL is written by the CLI (Claude
+   Code, Codex), which records every tool call and every tool result mechanically; the model cannot
+   omit a read from it. The `secret-in-read` rule scans the *returned content* (the bytes that
+   entered the context), including the full `toolUseResult` and results spilled to
+   `<sessionId>/tool-results/` when the inline preview is truncated.
+2. **It is still one process and one user-writable file.** The same vendor's process writes it,
+   nobody countersigns it, and it can be edited or truncated. Treat the read set as a **lower
+   bound** of what reached the model, never as proof that nothing else did.
+3. **The `remote` flag is assumed, not observed.** Every agent session is treated as talking to a
+   remote model because brain0 cannot see the endpoint; a local model behind a proxy still shows
+   up as egress.
+
+What brain0 extracts as a read today:
+
+| Channel | Claude Code | Codex |
+|---|---|---|
+| Dedicated read tool | `Read`, `NotebookRead` | — |
+| Search returning content | `Grep` with `output_mode: content` (the target path, or the repo root) | — |
+| Shell readers | `Bash`: `cat`, `head`, `tail`, `less`, `sed` (not `-i`), `grep`/`rg`, `awk`, `jq`, `diff`, `source`/`.`, `< file`, `git show rev:path`, … with pipes, `$(…)`, quotes and `cd` tracking | `exec_command` (string or argv form), same parser |
+| Content scanned | `tool_result` + `toolUseResult` + spilled `tool-results/*.txt` | `function_call_output` (plain or `{output, metadata}` envelope) |
+| Subagents | `<sessionId>/subagents/*.jsonl`, merged into the parent session | — |
+
+What it does **not** see: reads through MCP tools or `WebFetch`; environment variables
+(`printenv`, `echo $KEY`); readers the shell parser does not know, scripts (`python x.py`), and
+anything behind `ssh`/`docker exec`; agents brain0 has no adapter for; sessions whose transcript
+was disabled, pruned, or altered *before* ingest. A shell command that reads several files has its
+single output attributed to each of them.
+
+**Tamper evidence.** Every ingest pass writes an `ingest` audit event with the adapter, the byte
+range consumed and its BLAKE3 digest. `brain0 verify` re-hashes those ranges and reports
+`transcripts: N ok, M changed, K missing/pruned`, failing on `changed`: a transcript rewritten or
+truncated after brain0 read it is caught. A pruned transcript (agents delete old sessions) is
+reported, not failed.
+
+**What a fact-side source for reads would take** (none of these ship today):
+
+- an inline proxy on the model API base URL: the only place that knows what content actually
+  left the machine, and the natural thing to reconcile the transcript's read set against;
+- kernel file-open events (fanotify, eBPF, auditd) for process-attributed opens: passive, but
+  root-only and Linux-only, and they say "opened", not "reached the model";
+- time-correlated `inotify` open events from the existing watcher: no process attribution, a
+  weak second witness at best.
+
 ## `brain0 guard` — detective audit
 
 Evaluate every recorded agent read in the index and report what reached a remote model:
@@ -115,5 +166,7 @@ brain0 compliance --strict         # release/PR gate over the whole history (see
 - The guard is **detective** — brain0 observes the agent's egress, it does not sit in the data path.
   `preflight` is the realistic prevention primitive; a true inline LLM proxy is a separate, larger
   initiative (not required for this feature's value).
+- The read set is **single-source** (the harness transcript) and a **lower bound**; see
+  *What the read set is, and is not* above for exactly what is and is not captured.
 - `--watch` polls the index rather than tailing transcripts directly; a native fs-tail is a future
   refinement. Pair it with `brain0 dev`, which keeps the index fresh.
