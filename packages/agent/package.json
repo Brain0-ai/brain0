@@ -1,6 +1,6 @@
 {
   "name": "@brain0/agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "brain0 internal RAG-on-graph agent: recency-aware search, embeddings, debug & audit",
   "license": "Apache-2.0",

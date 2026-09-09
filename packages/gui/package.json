@@ -1,6 +1,6 @@
 {
   "name": "@brain0/gui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "brain0 PixiJS GUI: bipartite graph, LOD lens, risk color, timeline, search",
   "license": "Apache-2.0",

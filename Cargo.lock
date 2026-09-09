@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-agentsrc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "brain0-model",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-attest"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ed25519-dalek",
  "getrandom",
@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "brain0-agentsrc",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chacha20poly1305",
  "getrandom",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-identity"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "brain0-model",
  "brain0-parser",
@@ -240,14 +240,14 @@ dependencies = [
 
 [[package]]
 name = "brain0-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "brain0-model"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-models"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "brain0-storage",
  "serde",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-observer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "brain0-identity",
@@ -284,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-parser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "brain0-model",
@@ -299,14 +299,14 @@ dependencies = [
 
 [[package]]
 name = "brain0-policy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "brain0-reconcile"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "brain0-model",
  "brain0-storage",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-risk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "brain0-model",
  "brain0-storage",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "brain0-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "brain0-crypto",
