@@ -119,15 +119,26 @@ jobs:
           FLAG="--dry-run"
           if [ "$DO_PUBLISH" = "true" ]; then FLAG="--provenance"; fi
           echo "publish mode: $FLAG"
+          # npm never lets a version be overwritten, so a version already on the registry is
+          # skipped: a run that failed part-way (e.g. on a token) can simply be run again.
           # npm treats a bare "dir/file.tgz" as a GitHub owner/repo shorthand and tries git
           # over ssh — the ./ prefix forces local-path resolution.
+          publish() {
+            SPEC=$(tar -xOzf "$1" package/package.json \
+              | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')
+            if [ "$DO_PUBLISH" = "true" ] && [ -n "$(npm view "$SPEC" version 2>/dev/null)" ]; then
+              echo "skip $SPEC: already published"
+              return
+            fi
+            npm publish $FLAG --access public "./$1"
+          }
           # Platform packages first, the resolver package last.
           for t in dist-npm/brain0-cli-*.tgz; do
-            npm publish $FLAG --access public "./$t"
+            publish "$t"
           done
           for t in dist-npm/brain0-*.tgz; do
             case "$t" in */brain0-cli-*) continue ;; esac
-            npm publish $FLAG --access public "./$t"
+            publish "$t"
           done
       - uses: actions/upload-artifact@v4
         with:
