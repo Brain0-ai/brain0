@@ -1,13 +1,15 @@
 //! `brain0` — the command-line entry point.
 //!
-//! brain0 never writes to the observed repository. It reads git (the *fact* side) and
-//! passively reads coding-agent transcripts + memory (the *declared/intent* side), and
-//! writes only to its own index + payload store. MCP is offered as a **query** channel.
+//! brain0 never writes to the observed repository's code or history. It reads git (the *fact*
+//! side) and passively reads coding-agent transcripts + memory (the *declared/intent* side),
+//! and writes only to its own index + payload store (a self-ignoring `.brain0/`) and to key
+//! files kept outside the repository (`store`). MCP is offered as a **query** channel.
 
 mod mcp_query;
 mod query;
 mod report;
 mod rewind;
+mod store;
 mod today;
 
 use std::cell::Cell;
@@ -68,8 +70,9 @@ enum Command {
         payload: PathBuf,
         #[arg(long, default_value = "local")]
         author: String,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         /// Store payload unencrypted (e.g. on a full-disk-encrypted machine).
         #[arg(long)]
         no_encrypt_payload: bool,
@@ -89,8 +92,9 @@ enum Command {
         /// Observe every project's sessions, not only the current one.
         #[arg(long)]
         all: bool,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         #[arg(long)]
         no_encrypt_payload: bool,
     },
@@ -139,8 +143,9 @@ enum Command {
         db: PathBuf,
         #[arg(long, default_value = ".brain0/payload")]
         payload: PathBuf,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         #[arg(long)]
         no_encrypt_payload: bool,
     },
@@ -157,8 +162,9 @@ enum Command {
         db: PathBuf,
         #[arg(long, default_value = ".brain0/payload")]
         payload: PathBuf,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         #[arg(long)]
         no_encrypt_payload: bool,
     },
@@ -221,9 +227,10 @@ enum Command {
         commit: String,
         #[arg(long, default_value = ".brain0/index.db")]
         db: PathBuf,
-        /// Signing-key file (generated 0600 if absent); or set BRAIN0_ATTEST_KEY (hex seed).
-        #[arg(long, default_value = ".brain0/attest.key")]
-        key_file: PathBuf,
+        /// Signing-key file (generated 0600 if absent) [default: per store, next to the payload
+        /// key]; or set BRAIN0_ATTEST_KEY (hex seed).
+        #[arg(long)]
+        key_file: Option<PathBuf>,
     },
     /// Verify a signed attestation envelope (file). Pass --pubkey to check a trusted key.
     VerifyAttestation {
@@ -241,8 +248,9 @@ enum Command {
         db: PathBuf,
         #[arg(long, default_value = ".brain0/payload")]
         payload: PathBuf,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         #[arg(long)]
         no_encrypt_payload: bool,
     },
@@ -263,8 +271,9 @@ enum Command {
         db: PathBuf,
         #[arg(long, default_value = ".brain0/payload")]
         payload: PathBuf,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         #[arg(long)]
         no_encrypt_payload: bool,
     },
@@ -274,8 +283,9 @@ enum Command {
         db: PathBuf,
         #[arg(long, default_value = ".brain0/payload")]
         payload: PathBuf,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         #[arg(long)]
         no_encrypt_payload: bool,
         /// Purge a specific task's payload.
@@ -299,24 +309,34 @@ enum Command {
         author: String,
         #[arg(long, default_value_t = 1500)]
         debounce_ms: u64,
-        #[arg(long, default_value = ".brain0/keyring.key")]
-        key_file: PathBuf,
+        /// Payload key file [default: per store, under BRAIN0_KEYS_DIR or the user data dir].
+        #[arg(long)]
+        key_file: Option<PathBuf>,
         #[arg(long)]
         no_encrypt_payload: bool,
     },
 }
 
 fn open_storage(db: &Path) -> Result<SqliteStorage> {
+    store::ensure_self_ignored(db)?;
     if let Some(parent) = db.parent() {
         std::fs::create_dir_all(parent).ok();
     }
     SqliteStorage::open(db).context("opening index database")
 }
 
-/// Open the payload store. Encrypted by default (secure-by-default): the KEK comes from
-/// `BRAIN0_KEK` if set, else an auto-generated 0600 key file. `--no-encrypt-payload` opts
-/// out (e.g. on a full-disk-encrypted machine).
-fn open_payload(dir: &Path, encrypt: bool, key_file: &Path) -> Result<Box<dyn PayloadStore>> {
+/// Open the payload store of the index at `db`. Encrypted by default (secure-by-default): the
+/// KEK comes from `BRAIN0_KEK` if set, else an auto-generated 0600 key file kept outside the
+/// repository (`store::key_path`). `--no-encrypt-payload` opts out (e.g. on a
+/// full-disk-encrypted machine).
+fn open_payload(
+    storage: &SqliteStorage,
+    db: &Path,
+    dir: &Path,
+    encrypt: bool,
+    key_file: Option<&Path>,
+) -> Result<Box<dyn PayloadStore>> {
+    store::ensure_self_ignored(dir)?;
     if !encrypt {
         eprintln!("warning: payload encryption disabled (--no-encrypt-payload)");
         return Ok(Box::new(
@@ -329,15 +349,10 @@ fn open_payload(dir: &Path, encrypt: bool, key_file: &Path) -> Result<Box<dyn Pa
                 .context("opening encrypted payload store (BRAIN0_KEK)")?,
         ))
     } else {
-        if let Some(parent) = key_file.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
+        let key_file = store::key_path(key_file, db, &storage.store_id()?, store::PAYLOAD_KEY)?;
         Ok(Box::new(
-            EncryptedPayloadStore::open(
-                dir,
-                FileKeyProvider::new("file", key_file.to_path_buf(), true),
-            )
-            .context("opening encrypted payload store (key file)")?,
+            EncryptedPayloadStore::open(dir, FileKeyProvider::new("file", key_file, true))
+                .context("opening encrypted payload store (key file)")?,
         ))
     }
 }
@@ -502,11 +517,11 @@ fn cmd_ingest(
     db: &Path,
     payload: &Path,
     author: &str,
-    key_file: &Path,
+    key_file: Option<&Path>,
     encrypt: bool,
 ) -> Result<()> {
     let storage = open_storage(db)?;
-    let payload_store = open_payload(payload, encrypt, key_file)?;
+    let payload_store = open_payload(&storage, db, payload, encrypt, key_file)?;
     // Persist the at-rest mode so downstream consumers (e.g. the GUI refresh) never downgrade
     // an encrypted store to plaintext. Idempotent; does not change command output.
     storage.set_payload_encryption(encrypt)?;
@@ -631,11 +646,11 @@ fn cmd_observe(
     db: &Path,
     payload: &Path,
     all: bool,
-    key_file: &Path,
+    key_file: Option<&Path>,
     encrypt: bool,
 ) -> Result<()> {
     let storage = open_storage(db)?;
-    let payload_store = open_payload(payload, encrypt, key_file)?;
+    let payload_store = open_payload(&storage, db, payload, encrypt, key_file)?;
     // Persist the at-rest mode so downstream consumers (e.g. the GUI refresh) never downgrade
     // an encrypted store to plaintext. Idempotent; does not change command output.
     storage.set_payload_encryption(encrypt)?;
@@ -818,9 +833,9 @@ fn cmd_mcp(db: &Path, repo: Option<String>) -> Result<()> {
 
 /// Re-embedding migration: change embedding model/dimension by re-embedding the
 /// whole corpus from the (already-redacted) payload, replacing the old vectors.
-fn cmd_reembed(db: &Path, payload: &Path, key_file: &Path, encrypt: bool) -> Result<()> {
+fn cmd_reembed(db: &Path, payload: &Path, key_file: Option<&Path>, encrypt: bool) -> Result<()> {
     let storage = open_storage(db)?;
-    let store = open_payload(payload, encrypt, key_file)?;
+    let store = open_payload(&storage, db, payload, encrypt, key_file)?;
     let config = ModelConfig::load(None);
     let embedder = embedder_with_fallback(&config.embedding);
 
@@ -870,9 +885,9 @@ fn cmd_reembed(db: &Path, payload: &Path, key_file: &Path, encrypt: bool) -> Res
     Ok(())
 }
 
-fn cmd_verify(db: &Path, payload: &Path, key_file: &Path, encrypt: bool) -> Result<()> {
+fn cmd_verify(db: &Path, payload: &Path, key_file: Option<&Path>, encrypt: bool) -> Result<()> {
     let storage = open_storage(db)?;
-    let store = open_payload(payload, encrypt, key_file)?;
+    let store = open_payload(&storage, db, payload, encrypt, key_file)?;
     let mut ok = 0usize;
     let mut corrupt = 0usize;
     let mut missing = 0usize;
@@ -924,14 +939,14 @@ fn cmd_verify(db: &Path, payload: &Path, key_file: &Path, encrypt: bool) -> Resu
 fn cmd_purge(
     db: &Path,
     payload: &Path,
-    key_file: &Path,
+    key_file: Option<&Path>,
     encrypt: bool,
     task: Option<&str>,
     older_than_days: Option<i64>,
 ) -> Result<()> {
     use std::collections::BTreeSet;
     let storage = open_storage(db)?;
-    let store = open_payload(payload, encrypt, key_file)?;
+    let store = open_payload(&storage, db, payload, encrypt, key_file)?;
 
     // Collect (task_id, payload_ref) targets.
     let mut targets: Vec<(brain0_model::TaskId, brain0_model::PayloadRef)> = Vec::new();
@@ -1430,13 +1445,19 @@ fn cmd_provenance(db: &Path, sha: &str) -> Result<()> {
     Ok(())
 }
 
-/// Load the attestation signing key (`BRAIN0_ATTEST_KEY` hex env, else `key_file`, generating a
-/// fresh 0600 key file if absent). The signing key never appears in logs.
-fn load_or_create_signer(key_file: &Path) -> Result<brain0_attest::Signer> {
+/// Load the attestation signing key (`BRAIN0_ATTEST_KEY` hex env, else `key_file` or the
+/// store's default key file outside the repository, generating a fresh 0600 key file if
+/// absent). The signing key never appears in logs.
+fn load_or_create_signer(
+    storage: &SqliteStorage,
+    db: &Path,
+    key_file: Option<&Path>,
+) -> Result<brain0_attest::Signer> {
     use brain0_attest::Signer;
     if let Ok(seed) = std::env::var("BRAIN0_ATTEST_KEY") {
         return Signer::from_seed_hex(&seed).map_err(|e| anyhow::anyhow!("BRAIN0_ATTEST_KEY: {e}"));
     }
+    let key_file = &store::key_path(key_file, db, &storage.store_id()?, store::ATTEST_KEY)?;
     if key_file.exists() {
         let seed = std::fs::read_to_string(key_file)?;
         return Signer::from_seed_hex(seed.trim())
@@ -1458,7 +1479,7 @@ fn load_or_create_signer(key_file: &Path) -> Result<brain0_attest::Signer> {
 
 /// Emit a signed AI-provenance attestation for a commit: an in-toto Statement (subject = the
 /// commit, predicate = the provenance) wrapped in an Ed25519-signed envelope (`§2.4`).
-fn cmd_attest(db: &Path, sha: &str, key_file: &Path) -> Result<()> {
+fn cmd_attest(db: &Path, sha: &str, key_file: Option<&Path>) -> Result<()> {
     let storage = open_storage(db)?;
     let provenance = build_provenance(&storage, sha)?;
     let commit = provenance
@@ -1474,7 +1495,7 @@ fn cmd_attest(db: &Path, sha: &str, key_file: &Path) -> Result<()> {
     });
     // Sign the exact serialized statement bytes (the verifier checks the same bytes back).
     let statement_str = serde_json::to_string(&statement)?;
-    let signer = load_or_create_signer(key_file)?;
+    let signer = load_or_create_signer(&storage, db, key_file)?;
     let signature = signer.sign(statement_str.as_bytes());
     let envelope = serde_json::json!({
         "statement": statement_str,
@@ -1545,7 +1566,7 @@ fn parse_hunks(diff: &str) -> Vec<serde_json::Value> {
 fn cmd_attribution(
     db: &Path,
     payload: &Path,
-    key_file: &Path,
+    key_file: Option<&Path>,
     encrypt: bool,
     sha: &str,
 ) -> Result<()> {
@@ -1553,7 +1574,7 @@ fn cmd_attribution(
     use std::collections::BTreeSet;
 
     let storage = open_storage(db)?;
-    let store = open_payload(payload, encrypt, key_file)?;
+    let store = open_payload(&storage, db, payload, encrypt, key_file)?;
     let commit_id = find_commit_task(&storage, sha)?
         .ok_or_else(|| anyhow::anyhow!("no commit found for SHA prefix '{sha}'"))?;
     let prov = build_provenance_for(&storage, &commit_id)?;
@@ -1779,11 +1800,11 @@ fn cmd_rewind(
     path: &Path,
     db: &Path,
     payload: &Path,
-    key_file: &Path,
+    key_file: Option<&Path>,
     encrypt: bool,
 ) -> Result<()> {
     let storage = open_storage(db)?;
-    let payload_store = open_payload(payload, encrypt, key_file)?;
+    let payload_store = open_payload(&storage, db, payload, encrypt, key_file)?;
 
     if list || to.is_none() {
         let checkpoints = storage.list_checkpoints()?;
@@ -1830,11 +1851,11 @@ fn cmd_watch(
     payload: &Path,
     author: &str,
     debounce_ms: u64,
-    key_file: &Path,
+    key_file: Option<&Path>,
     encrypt: bool,
 ) -> Result<()> {
     let storage = open_storage(db)?;
-    let payload_store = open_payload(payload, encrypt, key_file)?;
+    let payload_store = open_payload(&storage, db, payload, encrypt, key_file)?;
     let mut engine = CheckpointEngine::new(
         path,
         repo,
@@ -1886,7 +1907,7 @@ fn main() -> Result<()> {
             &db,
             &payload,
             &author,
-            &key_file,
+            key_file.as_deref(),
             !no_encrypt_payload,
         ),
         Command::Observe {
@@ -1903,7 +1924,7 @@ fn main() -> Result<()> {
             &db,
             &payload,
             all,
-            &key_file,
+            key_file.as_deref(),
             !no_encrypt_payload,
         ),
         Command::Query { text, db, k } => cmd_query(&text, &db, k),
@@ -1923,7 +1944,7 @@ fn main() -> Result<()> {
             &path,
             &db,
             &payload,
-            &key_file,
+            key_file.as_deref(),
             !no_encrypt_payload,
         ),
         Command::Mcp { db, repo } => cmd_mcp(&db, repo),
@@ -1932,7 +1953,7 @@ fn main() -> Result<()> {
             payload,
             key_file,
             no_encrypt_payload,
-        } => cmd_verify(&db, &payload, &key_file, !no_encrypt_payload),
+        } => cmd_verify(&db, &payload, key_file.as_deref(), !no_encrypt_payload),
         Command::Audit { db, limit } => cmd_audit(&db, limit),
         Command::Guard {
             db,
@@ -1960,7 +1981,7 @@ fn main() -> Result<()> {
             commit,
             db,
             key_file,
-        } => cmd_attest(&db, &commit, &key_file),
+        } => cmd_attest(&db, &commit, key_file.as_deref()),
         Command::VerifyAttestation { file, pubkey } => {
             cmd_verify_attestation(&file, pubkey.as_deref())
         }
@@ -1970,14 +1991,20 @@ fn main() -> Result<()> {
             payload,
             key_file,
             no_encrypt_payload,
-        } => cmd_attribution(&db, &payload, &key_file, !no_encrypt_payload, &commit),
+        } => cmd_attribution(
+            &db,
+            &payload,
+            key_file.as_deref(),
+            !no_encrypt_payload,
+            &commit,
+        ),
         Command::Compliance { db, json, strict } => cmd_compliance(&db, json, strict),
         Command::Reembed {
             db,
             payload,
             key_file,
             no_encrypt_payload,
-        } => cmd_reembed(&db, &payload, &key_file, !no_encrypt_payload),
+        } => cmd_reembed(&db, &payload, key_file.as_deref(), !no_encrypt_payload),
         Command::Purge {
             db,
             payload,
@@ -1988,7 +2015,7 @@ fn main() -> Result<()> {
         } => cmd_purge(
             &db,
             &payload,
-            &key_file,
+            key_file.as_deref(),
             !no_encrypt_payload,
             task.as_deref(),
             older_than_days,
@@ -2009,7 +2036,7 @@ fn main() -> Result<()> {
             &payload,
             &author,
             debounce_ms,
-            &key_file,
+            key_file.as_deref(),
             !no_encrypt_payload,
         ),
     }

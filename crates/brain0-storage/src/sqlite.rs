@@ -116,6 +116,21 @@ impl SqliteStorage {
             .optional()?
             .map(|v| v == "encrypted"))
     }
+
+    /// Stable, random, non-secret identity of this index, created on first call. Per-store
+    /// state that must live OUTSIDE the store directory (key files) is keyed by it, so it
+    /// follows the index when the repository is moved. Race-safe get-or-create.
+    pub fn store_id(&self) -> Result<String> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('store_id', lower(hex(randomblob(16))))",
+            [],
+        )?;
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key='store_id'", [], |r| {
+                r.get::<_, String>(0)
+            })?)
+    }
 }
 
 fn parse_ts(s: &str) -> Result<Timestamp> {
@@ -1196,6 +1211,19 @@ mod tests {
         // Idempotent overwrite to plaintext.
         s.set_payload_encryption(false).unwrap();
         assert_eq!(s.get_payload_encryption().unwrap(), Some(false));
+    }
+
+    #[test]
+    fn store_id_is_created_once_and_stable() {
+        let s = SqliteStorage::open_in_memory().unwrap();
+        let id = s.store_id().unwrap();
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(s.store_id().unwrap(), id);
+        assert_ne!(
+            SqliteStorage::open_in_memory().unwrap().store_id().unwrap(),
+            id
+        );
     }
 
     #[test]

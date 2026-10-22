@@ -30,6 +30,7 @@ brain0-agentsrc.workspace = true
 brain0-crypto.workspace = true
 brain0-models.workspace = true
 anyhow.workspace = true
+dirs.workspace = true
 chrono.workspace = true
 clap.workspace = true
 serde_json.workspace = true

@@ -5,7 +5,8 @@
  *   brain0 up [--path <dir>] [--repo <id>] [--port 8787] [--encrypt] [--all]
  *             [--no-ingest] [--no-observe] [--no-open]
  *       Index the repo (git facts + agent transcripts) and serve the GUI — one command,
- *       zero config: repo id is inferred from the git remote, data lives in <repo>/.brain0.
+ *       zero config: repo id is inferred from the git remote, data lives in <repo>/.brain0
+ *       (self-ignoring; keys are kept outside the repository).
  *
  *   brain0 <ingest|observe|query|mcp|verify|audit|reembed|purge|watch> …
  *       Forwarded verbatim to the Rust core binary.

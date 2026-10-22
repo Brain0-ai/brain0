@@ -62,7 +62,8 @@ brain0 query "why did the parser break"   # root-cause debug over the graph
 
 ## What you need
 
-The only hard requirement is **Node.js ≥ 20**. brain0 is offline-first: with nothing else
+The only hard requirement is **Node.js ≥ 20** (on Linux, glibc ≥ 2.28: Debian 10+, Ubuntu
+20.04+, RHEL 8+; musl/Alpine is not supported yet). brain0 is offline-first: with nothing else
 installed it still works end to end: deterministic summaries, local feature-hash embeddings,
 zero egress. Local models make it *better*, never *required*.
 
@@ -154,7 +155,9 @@ forget again.
 
 ## How it works
 
-brain0 is a **pure observer**: it never writes to your repository.
+brain0 is a **pure observer**: it never touches your code or your git history. Its local
+index lives in a `.brain0/` directory that ignores itself, and its keys live outside the
+repository ([`docs/security.md`](./docs/security.md)).
 
 ```
             ┌───────────────────────── GUI (PixiJS / TS) ─────────────────────────┐

@@ -25,13 +25,17 @@ jobs:
       matrix:
         # darwin-x64 is CROSS-compiled on Apple Silicon: GitHub retired the Intel macOS
         # runners (macos-13), and macOS toolchains cross-target cleanly.
+        # Linux binaries link against glibc 2.28 (cargo-zigbuild), not the runner's: a
+        # native ubuntu-24.04 build requires glibc 2.39 and fails on Debian 12 / node:20 (#4).
         include:
           - key: linux-x64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            glibc: "2.28"
           - key: linux-arm64
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            glibc: "2.28"
           - key: darwin-x64
             runner: macos-14
             target: x86_64-apple-darwin
@@ -47,7 +51,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.key }}
-      - run: cargo build --release -p brain0-cli --target ${{ matrix.target }}
+      - if: matrix.glibc
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: matrix.glibc
+        run: pip install cargo-zigbuild==0.24.0 ziglang==0.17.0
+      - if: matrix.glibc
+        run: cargo zigbuild --release -p brain0-cli --target ${{ matrix.target }}.${{ matrix.glibc }}
+      - if: "!matrix.glibc"
+        run: cargo build --release -p brain0-cli --target ${{ matrix.target }}
+      - name: Guard — Linux binary must not need a newer glibc than ${{ matrix.glibc }}
+        if: matrix.glibc
+        run: |
+          NEED=$(objdump -T target/${{ matrix.target }}/release/brain0 \
+            | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "highest glibc symbol: $NEED"
+          if [ "$(printf '%s\n%s\n' "$NEED" "${{ matrix.glibc }}" | sort -V | tail -1)" != "${{ matrix.glibc }}" ]; then
+            echo "::error::binary needs glibc $NEED > ${{ matrix.glibc }}"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: brain0-${{ matrix.key }}

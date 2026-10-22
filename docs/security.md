@@ -38,6 +38,17 @@ The driver redacts each turn before payload write, summary, or embedding.
   KEK). `EncryptedPayloadStore` (CLI default). KEK from `BRAIN0_KEK` (64 hex) or an auto-generated
   `0600` key file; fail-closed if a required key is missing. KEK rotation re-wraps DEKs only.
   Full DB encryption via `--features sqlcipher` (`SqliteStorage::open_encrypted`).
+- **Key material stays out of the repository** — key files (payload KEK `keyring.key`,
+  attestation seed `attest.key`) default to `<keys dir>/<store id>/`, where the keys dir is
+  `BRAIN0_KEYS_DIR` or the user data dir (`~/.local/share/brain0/keys` on Linux,
+  `~/Library/Application Support/brain0/keys` on macOS), and the store id is a random,
+  non-secret id kept in the index, so the key follows the index when the repository moves.
+  `--key-file` overrides. To use a store on another machine, copy its key file or use
+  `BRAIN0_KEK`.
+- **The store never enters git** — the index and payload default to `.brain0/` in the working
+  directory; brain0 writes `.brain0/.gitignore` (`*`) whenever it creates or opens that
+  directory, so `git add -A` stages nothing from it, and it warns when git already tracks
+  files there.
 - **In-transit** — the open-core `brain0_storage::require_tls` policy helper enforces
   `sslmode=verify-full` (fail-closed; plaintext/`prefer`/`require` refused). The enterprise
   Postgres backend consumes it on connect and pairs it with a rustls/ring TLS connector over
@@ -94,4 +105,26 @@ The driver redacts each turn before payload write, summary, or embedding.
   in plaintext OUTSIDE the (encryptable) payload store, so index rebuilds cost zero model
   calls. Summaries are computed on already-redacted text (T0 never reaches them), but if the
   cache location worries you, point it elsewhere or disable it: `BRAIN0_SUMMARY_CACHE=path|off`.
+- `npx brain0 up` stores the payload **unencrypted** by default, because the GUI hydrates
+  plaintext payload (see above); `up --encrypt` opts back in. The self-ignoring `.brain0/`
+  keeps it out of git either way.
 - Test fixtures use only **fake** secrets (e.g. AWS's documented `AKIAIOSFODNN7EXAMPLE`).
+
+## If `.brain0/` was committed (brain0 ≤ 0.1.1)
+
+brain0 0.1.1 and earlier wrote the index, the payload and the key files into `.brain0/` in the
+working directory, without a `.gitignore`, so a `git add -A` could commit the payload KEK next
+to the payload it encrypts. From 0.1.2 brain0 moves those keys out of the repository on first
+run, makes `.brain0/` ignore itself, and warns if git still tracks files in it. That protects
+what comes next, not what was already committed:
+
+1. Untrack the store: `git rm -r --cached .brain0 && git commit`.
+2. If those commits were pushed or shared, treat everything in them (index, payload, keys) as
+   disclosed. Rewriting history (e.g. `git filter-repo --path .brain0 --invert-paths`) limits
+   further spread but does not undo it.
+3. Attestation key: delete it (`<keys dir>/<store id>/attest.key`) so a new one is generated,
+   publish the new public key, and stop trusting attestations signed with the old one.
+4. Payload KEK: blobs that were committed stay readable with the committed key. For a clean
+   start, delete `.brain0/` and the store's key directory and re-run `brain0 up` (or `ingest`
+   and `observe`); the index is rebuilt from git history and the agent transcripts still on
+   disk.

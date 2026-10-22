@@ -106,7 +106,8 @@ brain0 verify-attestation a0c7c90.att.json --pubkey <hex>  # against a TRUSTED k
 ### Signing keys
 
 The signing key is a 32-byte Ed25519 seed (64 hex). Provide it via `BRAIN0_ATTEST_KEY` (env) or
-`--key-file` (default `.brain0/attest.key`, generated `0600` if absent). The verifier needs only the
+`--key-file` (default `<keys dir>/<store id>/attest.key`, outside the repository — see
+[`security.md`](./security.md) — generated `0600` if absent). The verifier needs only the
 public key — it can confirm an attestation without the ability to mint one. The private key is
 redacted in all logs / Debug output.
 
