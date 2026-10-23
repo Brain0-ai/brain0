@@ -78,11 +78,55 @@ fn warn_if_tracked(dir: &Path) {
 pub fn key_path(explicit: Option<&Path>, db: &Path, store_id: &str, name: &str) -> Result<PathBuf> {
     if let Some(path) = explicit {
         ensure_self_ignored(path)?;
+        // A missing payload key file gets a fresh key, which would orphan the existing
+        // payload when this index already has one (e.g. `--key-file .brain0/keyring.key`
+        // after the upgrade moved it). A fresh attestation key only changes who signs.
+        if name == PAYLOAD_KEY && !path.exists() {
+            if let Ok(root) = keys_dir() {
+                refuse_shadowing(&root.join(store_id).join(name), path)?;
+            }
+        }
         return Ok(path.to_path_buf());
     }
     let sibling = db.parent().unwrap_or(Path::new(".")).join(name);
     let stray = Path::new(STORE_DIR).join(name);
     locate_key(&keys_dir()?, store_id, name, &sibling, &stray)
+}
+
+/// Move every key brain0 ≤ 0.1.1 left next to the index at `db` out of the repository, whichever
+/// command runs first, not only the commands that use that key.
+pub fn migrate_legacy_keys(db: &Path, store_id: impl FnOnce() -> Result<String>) -> Result<()> {
+    let dir = db.parent().unwrap_or(Path::new("."));
+    if [PAYLOAD_KEY, ATTEST_KEY]
+        .iter()
+        .any(|n| dir.join(n).exists())
+    {
+        migrate_keys(&keys_dir()?, &store_id()?, dir)?;
+    }
+    Ok(())
+}
+
+fn migrate_keys(root: &Path, store_id: &str, dir: &Path) -> Result<()> {
+    for name in [PAYLOAD_KEY, ATTEST_KEY] {
+        let legacy = dir.join(name);
+        if legacy.exists() {
+            locate_key(root, store_id, name, &legacy, &legacy)?;
+        }
+    }
+    Ok(())
+}
+
+fn refuse_shadowing(default: &Path, explicit: &Path) -> Result<()> {
+    if default.exists() {
+        bail!(
+            "{} does not exist, but this index already has a payload key at {}; pass \
+             --key-file {} or drop --key-file",
+            explicit.display(),
+            default.display(),
+            default.display()
+        );
+    }
+    Ok(())
 }
 
 fn keys_dir() -> Result<PathBuf> {
@@ -240,6 +284,32 @@ mod tests {
         // Second run: the moved key is reused as is.
         let again = locate_key(&root.join("keys"), "abc", PAYLOAD_KEY, &sibling, &sibling).unwrap();
         assert_eq!(again, key);
+    }
+
+    #[test]
+    fn every_legacy_key_moves_whichever_command_runs_first() {
+        let root = tmp("migrate-all");
+        let dir = root.join("repo/.brain0");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(PAYLOAD_KEY), "kek").unwrap();
+        std::fs::write(dir.join(ATTEST_KEY), "seed").unwrap();
+        migrate_keys(&root.join("keys"), "abc", &dir).unwrap();
+        let moved = |name: &str| std::fs::read_to_string(root.join("keys/abc").join(name)).unwrap();
+        assert_eq!(moved(PAYLOAD_KEY), "kek");
+        assert_eq!(moved(ATTEST_KEY), "seed");
+        assert!(!dir.join(PAYLOAD_KEY).exists() && !dir.join(ATTEST_KEY).exists());
+    }
+
+    #[test]
+    fn missing_explicit_key_never_shadows_the_moved_one() {
+        let root = tmp("shadow");
+        let moved = root.join("keys/abc").join(PAYLOAD_KEY);
+        let explicit = root.join("repo/.brain0").join(PAYLOAD_KEY);
+        refuse_shadowing(&moved, &explicit).unwrap(); // no key yet: a fresh one is fine
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, "kek").unwrap();
+        let err = refuse_shadowing(&moved, &explicit).unwrap_err();
+        assert!(err.to_string().contains("already has a payload key"));
     }
 
     #[test]

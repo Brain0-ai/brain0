@@ -322,7 +322,12 @@ fn open_storage(db: &Path) -> Result<SqliteStorage> {
     if let Some(parent) = db.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    SqliteStorage::open(db).context("opening index database")
+    let storage = SqliteStorage::open(db).context("opening index database")?;
+    // Best effort: commands that need a key fail loudly on it later.
+    if let Err(e) = store::migrate_legacy_keys(db, || Ok(storage.store_id()?)) {
+        eprintln!("warning: {e:#}");
+    }
+    Ok(storage)
 }
 
 /// Open the payload store of the index at `db`. Encrypted by default (secure-by-default): the
