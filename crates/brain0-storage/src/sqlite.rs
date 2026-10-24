@@ -120,16 +120,26 @@ impl SqliteStorage {
     /// Stable, random, non-secret identity of this index, created on first call. Per-store
     /// state that must live OUTSIDE the store directory (key files) is keyed by it, so it
     /// follows the index when the repository is moved. Race-safe get-or-create.
+    ///
+    /// Callers join it onto the keys directory, so only the shape created here (32 lowercase
+    /// hex chars) is accepted: an index from elsewhere, e.g. committed to a repository, must
+    /// not be able to name another path.
     pub fn store_id(&self) -> Result<String> {
         self.conn.execute(
             "INSERT OR IGNORE INTO meta (key, value) VALUES ('store_id', lower(hex(randomblob(16))))",
             [],
         )?;
-        Ok(self
+        let id = self
             .conn
             .query_row("SELECT value FROM meta WHERE key='store_id'", [], |r| {
                 r.get::<_, String>(0)
-            })?)
+            })?;
+        if id.len() != 32 || !id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(StorageError::Invalid(format!(
+                "malformed store_id {id:?} in the index meta table"
+            )));
+        }
+        Ok(id)
     }
 }
 
@@ -1224,6 +1234,27 @@ mod tests {
             SqliteStorage::open_in_memory().unwrap().store_id().unwrap(),
             id
         );
+    }
+
+    #[test]
+    fn malformed_store_id_is_refused() {
+        for bad in [
+            "../x",
+            "/abs",
+            "a/b",
+            "",
+            "ABCDEF0123456789abcdef0123456789",
+            "0123456789abcdef0123456789abcdef0",
+        ] {
+            let s = SqliteStorage::open_in_memory().unwrap();
+            s.conn
+                .execute(
+                    "INSERT INTO meta (key, value) VALUES ('store_id', ?1)",
+                    [bad],
+                )
+                .unwrap();
+            assert!(s.store_id().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

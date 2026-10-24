@@ -43,12 +43,24 @@ The driver redacts each turn before payload write, summary, or embedding.
   `BRAIN0_KEYS_DIR` or the user data dir (`~/.local/share/brain0/keys` on Linux,
   `~/Library/Application Support/brain0/keys` on macOS), and the store id is a random,
   non-secret id kept in the index, so the key follows the index when the repository moves.
+  The id is used only if it has the shape brain0 creates (32 hex chars), so an index committed
+  to a repository cannot point the key directory somewhere else.
   `--key-file` overrides. To use a store on another machine, copy its key file or use
   `BRAIN0_KEK`.
 - **The store never enters git** — the index and payload default to `.brain0/` in the working
   directory; brain0 writes `.brain0/.gitignore` (`*`) whenever it creates or opens that
   directory, so `git add -A` stages nothing from it, and it warns when git already tracks
   files there.
+- **The local server answers only this machine's own pages** — `brain0 up` binds to
+  `127.0.0.1`, refuses any request whose `Host` is not `localhost`, `127.0.0.1` or `[::1]`
+  (DNS rebinding), sends no CORS headers, and refuses cross-site browser requests
+  (`Sec-Fetch-Site` / `Origin`) on `/graph.json`, `/health` and `/api/*`, so a web page open
+  in your browser cannot read the graph and diffs. The routes with side effects also require a
+  custom header (`x-brain0-ask` for the smart chat, `x-brain0-refresh` for Refresh), which a
+  page on another site cannot send without a CORS preflight the server refuses, so it cannot
+  trigger LLM calls either, even from browsers without `Sec-Fetch-Site`. Payload refs are
+  accepted only as BLAKE3 digests (64 hex chars), so `/api/diff` cannot name a file outside the
+  payload store.
 - **In-transit** — the open-core `brain0_storage::require_tls` policy helper enforces
   `sslmode=verify-full` (fail-closed; plaintext/`prefer`/`require` refused). The enterprise
   Postgres backend consumes it on connect and pairs it with a rustls/ring TLS connector over
@@ -128,3 +140,18 @@ what comes next, not what was already committed:
    start, delete `.brain0/` and the store's key directory and re-run `brain0 up` (or `ingest`
    and `observe`); the index is rebuilt from git history and the agent transcripts still on
    disk.
+
+## Local server in brain0 ≤ 0.1.2
+
+Up to 0.1.2 the local server joined the `ref` of `/api/diff` onto the payload directory
+without validating it, so a crafted ref read any `.blob` file the user could read
+([GHSA-8vg9-5mf9-5c84](https://github.com/Brain0-ai/brain0/security/advisories/GHSA-8vg9-5mf9-5c84)).
+It also answered every API route with `Access-Control-Allow-Origin: *` and accepted any `Host`,
+so any web page open while `brain0 up` ran could read the graph, node details and diffs, and
+trigger smart-chat queries (paid ones, with a remote LLM configured). 0.1.3 closes both;
+upgrade with `npx brain0@latest up`; no local cleanup is needed.
+
+0.1.3 also hardens two places that trusted an index brought in from elsewhere (for example a
+`.brain0/index.db` committed to a cloned repository): the store id is no longer used as a
+path unless it is well-formed, and the GUI escapes timestamps it cannot parse instead of
+inserting them as HTML.

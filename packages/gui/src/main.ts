@@ -510,9 +510,10 @@ function renderNodeLite(node: GraphNode): string {
 }
 
 /** A short relative time ("2d ago"), falling back to the raw string if unparseable. */
+/** A relative time, safe to insert as HTML (an unparseable value is returned escaped). */
 function relTime(iso: string): string {
   const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
+  if (Number.isNaN(t)) return escapeHtml(iso);
   const s = Math.max(0, Math.round((Date.now() - t) / 1000));
   if (s < 60) return "just now";
   const m = Math.round(s / 60);
@@ -633,7 +634,7 @@ function renderCommit(detail: NodeDetail): string {
           .filter(Boolean)
           .map((s) => escapeHtml(s))
           .join(" · ");
-        const when = p.when ? ` · ${escapeHtml(relTime(p.when))}` : "";
+        const when = p.when ? ` · ${relTime(p.when)}` : "";
         return (
           `<button class="prompt-item" data-task="${escapeHtml(p.taskId)}">` +
           `<span class="prompt-sum">${text}</span>` +
