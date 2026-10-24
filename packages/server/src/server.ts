@@ -4,6 +4,7 @@
  *
  *   GET /graph.json     → the render-ready graph snapshot (buildGraphSnapshot)
  *   GET /api/debug?q=   → the smart chat: auto-intent debug/audit, structured findings + prose
+ *                         (requires the `x-brain0-ask: 1` header, which HttpDataSource sends)
  *   GET /*              → the built GUI (packages/gui/build or BRAIN0_GUI_DIR), so one process
  *                         serves both API and app (`brain0 up`); vite dev keeps working via proxy
  *
@@ -19,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { BoundedCache, normalizeQuery } from "./askcache.js";
+import { isCrossSite, isLoopbackHost } from "./origin.js";
 import { cacheControlFor, contentTypeFor, safeJoin } from "./staticfiles.js";
 import {
   Brain0Store,
@@ -75,11 +77,10 @@ async function buildLlm(): Promise<LLMProvider> {
   return provider;
 }
 
+// No CORS headers: the GUI is served same-origin (vite dev proxies), so no other origin may
+// read these responses.
 function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, {
-    "content-type": "application/json",
-    "access-control-allow-origin": "*",
-  });
+  res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 }
 
@@ -302,7 +303,14 @@ const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   void (async () => {
     try {
-      if (url.pathname === "/graph.json") {
+      // Other web pages must not reach the API (see origin.ts). The GUI's static files stay
+      // reachable by a cross-site navigation, but only under a loopback Host.
+      const api = url.pathname === "/graph.json" || url.pathname === "/health" || url.pathname.startsWith("/api/");
+      if (!isLoopbackHost(req.headers.host)) {
+        json(res, 403, { error: "forbidden: Host must be localhost or 127.0.0.1" });
+      } else if (api && isCrossSite(req.headers)) {
+        json(res, 403, { error: "forbidden: cross-site request" });
+      } else if (url.pathname === "/graph.json") {
         json(res, 200, buildGraphSnapshot(store, repo));
       } else if (url.pathname === "/api/node") {
         const detail = await buildNodeDetail(store, getText, url.searchParams.get("id") ?? "");
@@ -317,6 +325,11 @@ const server = createServer((req, res) => {
           const text = readablePayload(raw);
           json(res, 200, text === undefined ? { encrypted: true } : { diff: text });
         }
+      } else if (url.pathname === "/api/debug" && req.headers["x-brain0-ask"] !== "1") {
+        // Each query can cost an LLM call (and a remote embedding). A cross-site page cannot set
+        // this header without a CORS preflight, which is refused, so this holds even in
+        // browsers that send no Sec-Fetch-Site.
+        json(res, 403, { error: "forbidden: missing x-brain0-ask header" });
       } else if (url.pathname === "/api/debug") {
         // Two-phase smart chat. phase=retrieve → highlights in milliseconds, zero LLM tokens
         // (the GUI paints these immediately). The full phase runs the LLM once per

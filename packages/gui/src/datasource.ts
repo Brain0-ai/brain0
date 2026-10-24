@@ -76,7 +76,10 @@ export class HttpDataSource implements GraphDataSource {
   async debug(query: string, phase?: "retrieve"): Promise<DebugResponse> {
     try {
       const phaseArg = phase ? `&phase=${phase}` : "";
-      const res = await fetch(`${this.base}/api/debug?q=${encodeURIComponent(query)}${phaseArg}`);
+      // The custom header is what the server requires before it spends an LLM call.
+      const res = await fetch(`${this.base}/api/debug?q=${encodeURIComponent(query)}${phaseArg}`, {
+        headers: { "x-brain0-ask": "1" },
+      });
       if (!res.ok) return { tasks: [], artifacts: [], explanation: "", error: "llm-unreachable" };
       return (await res.json()) as DebugResponse;
     } catch {

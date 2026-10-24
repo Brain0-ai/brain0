@@ -44,6 +44,19 @@ pub trait PayloadStore: Send + Sync {
     }
 }
 
+/// The hex digest inside a reference, provided it is exactly what `put` mints: the scheme
+/// plus 64 lowercase hex chars. The filesystem stores build paths from it, so anything else
+/// (`..`, separators, NUL, a truncated digest) is refused instead of being joined onto the root.
+fn digest_hex(reference: &PayloadRef) -> Result<&str> {
+    reference
+        .as_str()
+        .strip_prefix(REF_SCHEME)
+        .filter(|hex| {
+            hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+        .ok_or_else(|| StorageError::Invalid(format!("bad payload ref: {reference}")))
+}
+
 /// The content-addressed reference for some bytes (without storing them). Useful when the
 /// reference must be known before/independently of writing.
 #[must_use]
@@ -92,10 +105,7 @@ impl PayloadStore for FsPayloadStore {
     }
 
     fn get(&self, reference: &PayloadRef) -> Result<Option<Vec<u8>>> {
-        let hex = reference
-            .as_str()
-            .strip_prefix(REF_SCHEME)
-            .ok_or_else(|| StorageError::Invalid(format!("bad payload ref: {reference}")))?;
+        let hex = digest_hex(reference)?;
         let path = self.path_for(hex);
         match std::fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),
@@ -105,10 +115,7 @@ impl PayloadStore for FsPayloadStore {
     }
 
     fn shred(&self, reference: &PayloadRef) -> Result<bool> {
-        let hex = reference
-            .as_str()
-            .strip_prefix(REF_SCHEME)
-            .ok_or_else(|| StorageError::Invalid(format!("bad payload ref: {reference}")))?;
+        let hex = digest_hex(reference)?;
         match std::fs::remove_file(self.path_for(hex)) {
             Ok(()) => Ok(true),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -141,10 +148,7 @@ impl PayloadStore for InMemoryPayloadStore {
     }
 
     fn get(&self, reference: &PayloadRef) -> Result<Option<Vec<u8>>> {
-        let hex = reference
-            .as_str()
-            .strip_prefix(REF_SCHEME)
-            .ok_or_else(|| StorageError::Invalid(format!("bad payload ref: {reference}")))?;
+        let hex = digest_hex(reference)?;
         Ok(self
             .blobs
             .lock()
@@ -154,10 +158,7 @@ impl PayloadStore for InMemoryPayloadStore {
     }
 
     fn shred(&self, reference: &PayloadRef) -> Result<bool> {
-        let hex = reference
-            .as_str()
-            .strip_prefix(REF_SCHEME)
-            .ok_or_else(|| StorageError::Invalid(format!("bad payload ref: {reference}")))?;
+        let hex = digest_hex(reference)?;
         Ok(self
             .blobs
             .lock()
@@ -214,10 +215,7 @@ impl<K: KeyProvider + Send + Sync> PayloadStore for EncryptedPayloadStore<K> {
     }
 
     fn get(&self, reference: &PayloadRef) -> Result<Option<Vec<u8>>> {
-        let hex = reference
-            .as_str()
-            .strip_prefix(REF_SCHEME)
-            .ok_or_else(|| StorageError::Invalid(format!("bad payload ref: {reference}")))?;
+        let hex = digest_hex(reference)?;
         let path = self.path_for(hex);
         match std::fs::read(&path) {
             Ok(bytes) => {
@@ -231,10 +229,7 @@ impl<K: KeyProvider + Send + Sync> PayloadStore for EncryptedPayloadStore<K> {
 
     /// Crypto-shred: delete the blob (its only wrapped DEK + ciphertext), irrecoverable.
     fn shred(&self, reference: &PayloadRef) -> Result<bool> {
-        let hex = reference
-            .as_str()
-            .strip_prefix(REF_SCHEME)
-            .ok_or_else(|| StorageError::Invalid(format!("bad payload ref: {reference}")))?;
+        let hex = digest_hex(reference)?;
         match std::fs::remove_file(self.path_for(hex)) {
             Ok(()) => Ok(true),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -316,6 +311,48 @@ mod tests {
             IntegrityStatus::Missing
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_refs_never_reach_the_filesystem() {
+        let base = std::env::temp_dir().join(format!("brain0-ref-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("payload").join("aa")).unwrap();
+        // Outside the store, where a `..` ref would land: must stay unread and undeleted.
+        std::fs::write(base.join("secret.blob"), b"OUTSIDE_SECRET_MARKER").unwrap();
+        std::fs::write(base.join("secret.enc"), b"OUTSIDE_SECRET_MARKER").unwrap();
+
+        let fs = FsPayloadStore::open(base.join("payload")).unwrap();
+        let enc = EncryptedPayloadStore::open(
+            base.join("payload"),
+            StaticKeyProvider::new("k", [1u8; KEY_LEN]),
+        )
+        .unwrap();
+        let mem = InMemoryPayloadStore::new();
+        let valid = reference_for(b"anything");
+        let hex = valid.as_str().strip_prefix("blake3:").unwrap();
+        for bad in [
+            "blake3:aa/../../secret".to_owned(),
+            format!("blake3:aa/../../secret{}", "0".repeat(48)),
+            "aa/../../secret".to_owned(),
+            format!("blake3:{}", hex.to_uppercase()),
+            format!("blake3:{}", &hex[..63]),
+            format!("blake3:{hex}0"),
+            format!("blake3:{}\0", &hex[..63]),
+            "blake3:".to_owned(),
+            hex.to_owned(),
+        ] {
+            let r = PayloadRef::new(bad.clone());
+            for store in [&fs as &dyn PayloadStore, &enc, &mem] {
+                assert!(store.get(&r).is_err(), "get must refuse {bad:?}");
+                assert!(store.shred(&r).is_err(), "shred must refuse {bad:?}");
+            }
+        }
+        assert!(base.join("secret.blob").exists() && base.join("secret.enc").exists());
+        for store in [&fs as &dyn PayloadStore, &enc, &mem] {
+            assert_eq!(store.get(&valid).unwrap(), None);
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
