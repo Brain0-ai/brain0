@@ -63,6 +63,54 @@ export interface GraphDataSource {
   refreshStatus(): Promise<RefreshStatus>;
 }
 
+/** One provider row in the provider registry (mirrors `@brain0/agent`). */
+export interface ProviderEntry {
+  id: string;
+  name: string;
+  endpoint: string;
+  defaultModel: string;
+  remote: boolean;
+  catalog: boolean;
+  description?: string;
+  docsUrl?: string;
+  modelsUrl?: string;
+  keysUrl?: string;
+  envKey?: string;
+}
+
+export interface CatalogModel {
+  id: string;
+  name: string;
+  contextLength?: number;
+  inputModalities: string[];
+  supportedEndpointTypes: string[];
+}
+
+export interface ModelCatalogResponse {
+  source: "live" | "fallback";
+  degraded: boolean;
+  error?: string;
+  models: CatalogModel[];
+}
+
+export interface ProviderStatus {
+  active: { provider: string; model: string };
+  providers: ProviderEntry[];
+  orcarouter: {
+    id: string;
+    displayName: string;
+    endpoint: string;
+    defaultModel: string;
+    fallbackModel: string;
+    recommendedModels: ReadonlyArray<{ id: string; name: string; summary: string }>;
+    credential: { present: boolean; source?: string; masked?: string };
+    authState: { generation: number; needsReauth: boolean; reason?: string };
+    catalog: { source: "live" | "fallback"; degraded: boolean; count: number; error?: string };
+    links: { home: string; cyber: string; cyberModels: string; keys: string };
+    envKey: string;
+  };
+}
+
 /** Reads `graph.json` and proxies debug queries to a backend that hosts the agent. */
 export class HttpDataSource implements GraphDataSource {
   constructor(private readonly base = "") {}
@@ -118,5 +166,52 @@ export class HttpDataSource implements GraphDataSource {
     const res = await fetch(`${this.base}/api/refresh/status`);
     if (!res.ok) return { state: "idle", phase: "", lines: [] };
     return (await res.json()) as RefreshStatus;
+  }
+
+  /** Provider registry + masked credential state. The key itself never leaves the server. */
+  async providerStatus(): Promise<ProviderStatus> {
+    const res = await fetch(`${this.base}/api/providers`);
+    if (!res.ok) throw new Error(`provider status failed: ${res.status}`);
+    return (await res.json()) as ProviderStatus;
+  }
+
+  /** Compatible chat models for OrcaRouter, filtered server-side by declared capability. */
+  async orcaRouterModels(modality?: string): Promise<ModelCatalogResponse> {
+    const q = modality ? `&modality=${encodeURIComponent(modality)}` : "";
+    const res = await fetch(`${this.base}/api/providers/orcarouter/models?capability=chat${q}`);
+    if (!res.ok) throw new Error(`model catalog failed: ${res.status}`);
+    return (await res.json()) as ModelCatalogResponse;
+  }
+
+  /** Hand a key to the server for this session. The custom header is the CSRF guard. */
+  async saveOrcaRouterKey(apiKey: string): Promise<{ masked: string; reachable: boolean }> {
+    const res = await fetch(`${this.base}/api/providers/orcarouter/key`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-brain0-provider": "1" },
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { error?: string; masked?: string; reachable?: boolean };
+    if (!res.ok) throw new Error(body.error ?? `could not save the key (${res.status})`);
+    return { masked: body.masked ?? "", reachable: body.reachable === true };
+  }
+
+  async clearOrcaRouterKey(): Promise<void> {
+    const res = await fetch(`${this.base}/api/providers/orcarouter/key`, {
+      method: "DELETE",
+      headers: { "x-brain0-provider": "1" },
+    });
+    if (!res.ok) throw new Error(`could not clear the key (${res.status})`);
+  }
+
+  async selectModel(model: string): Promise<void> {
+    const res = await fetch(`${this.base}/api/providers/model`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-brain0-provider": "1" },
+      body: JSON.stringify({ model }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? `could not select the model (${res.status})`);
+    }
   }
 }

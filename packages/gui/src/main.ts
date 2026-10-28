@@ -7,6 +7,7 @@
 import type { DetailVersion, GraphNode, GraphSnapshot, Level, NodeDetail } from "@brain0/shared";
 import { HttpDataSource, type DebugFinding, type DebugResponse } from "./datasource.js";
 import { PixiGraph } from "./renderer.js";
+import { ProviderPanel } from "./provider-panel.js";
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -23,8 +24,18 @@ async function main(): Promise<void> {
   const panel = el<HTMLElement>("panel");
   const refreshBtn = el<HTMLButtonElement>("refresh");
   const refreshStatus = el<HTMLElement>("refresh-status");
+  const providersBtn = el<HTMLButtonElement>("providers");
+  const providerDrawer = el<HTMLElement>("providers-drawer");
 
   const dataSource = new HttpDataSource();
+
+  // Provider panel (top-right): choose a provider, hold an OrcaRouter key for this session, and
+  // pick a model from the server-side catalog. Mounted before the graph so the provider surface is
+  // available even when WebGL is unavailable; every GUI entry point shares this one credential seam.
+  const providerPanel = new ProviderPanel(providerDrawer, { dataSource });
+  await providerPanel.mount();
+  providersBtn.addEventListener("click", () => providerPanel.show());
+
   const graph = new PixiGraph();
   await graph.init(stage);
 

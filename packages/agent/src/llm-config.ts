@@ -10,9 +10,15 @@
  *   This closes the "local LLM + silently-remote embeddings" leak.
  */
 
+import {
+  ORCAROUTER_DEFAULT_MODEL,
+  ORCAROUTER_PROVIDER_ID,
+  resolveOrcaRouterBase,
+} from "./orcarouter.js";
+
 export type Env = Record<string, string | undefined>;
 
-export type LlmProviderName = "ollama" | "anthropic" | "openai" | "echo";
+export type LlmProviderName = "ollama" | "anthropic" | "openai" | "orcarouter" | "echo";
 
 export interface LlmConfig {
   provider: LlmProviderName;
@@ -59,6 +65,17 @@ export function resolveLlmConfig(env: Env): LlmConfig {
     remote: true,
   });
 
+  // OrcaRouter Cyber Inference: a named provider with its own key, endpoint and default model.
+  // It is opt-in only — `BRAIN0_LLM_PROVIDER=orcarouter` — because brain0 stays local by default;
+  // a key alone must not silently route prompts to a remote gateway.
+  const orcarouter = (): LlmConfig => ({
+    provider: ORCAROUTER_PROVIDER_ID,
+    model: model ?? ORCAROUTER_DEFAULT_MODEL,
+    endpoint: endpoint ?? resolveOrcaRouterBase(env),
+    apiKey: env.ORCAROUTER_API_KEY ?? "",
+    remote: true,
+  });
+
   switch (env.BRAIN0_LLM_PROVIDER?.toLowerCase()) {
     case "ollama":
       return ollama();
@@ -66,6 +83,8 @@ export function resolveLlmConfig(env: Env): LlmConfig {
       return anthropic();
     case "openai":
       return openai();
+    case "orcarouter":
+      return orcarouter();
     case "echo":
       return { provider: "echo", model: "", endpoint: "", apiKey: "", remote: false };
     default:

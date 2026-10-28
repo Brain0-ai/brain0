@@ -10,5 +10,5 @@
     "types": ["node"],
     "noEmit": false
   },
-  "include": ["src/graph.ts", "src/graph.test.ts"]
+  "include": ["src/graph.ts", "src/graph.test.ts", "src/model-options.ts", "src/model-options.test.ts"]
 }
