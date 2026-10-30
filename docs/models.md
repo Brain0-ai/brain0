@@ -79,6 +79,52 @@ recall needs.
   corpus from the already-redacted payload, then reports a consistency summary. The same
   invalidation pipeline is shared with purge/crypto-shred.
 
+## Remote reasoning provider: OrcaRouter Cyber Inference
+
+The dashboard's smart chat (debug / audit over the index) can run against OrcaRouter Cyber
+Inference, a named OpenAI-compatible provider aimed at **security teams doing authorized, scoped
+work**: red teams get the OrcaCyber models, blue teams keep gateway controls on the same endpoint,
+and generic gateways that refuse or silently downgrade that class of request are not in the path.
+See [OrcaRouter](https://www.orcarouter.ai), the
+[cyber provider page](https://www.orcarouter.ai/cyber) and the
+[cyber model catalog](https://www.orcarouter.ai/models?tier=cyber).
+
+It is opt-in — brain0 stays local by default — and it is not a "custom base URL": the provider has
+its own id, key variable, endpoint and model policy.
+
+| Setting | Value |
+|---|---|
+| Provider id | `orcarouter` |
+| Display name | `OrcaRouter Cyber Inference` |
+| Inference / catalog base | `https://api.orcarouter.ai/v1` |
+| Key variable | `ORCAROUTER_API_KEY` (`sk-orca-…`) |
+| Default model | `orcarouter/auto` — automatic routing, works with any key |
+| Recommended (verified workspaces) | OrcaCyber Ultra (`orca/orcacyber-ultra-1.0`) and OrcaCyber Zero (`orca/orcacyber-zero-1.5`) |
+| General fallback | `orcarouter/fusion` |
+| Endpoint override | `BRAIN0_ORCAROUTER_ENDPOINT` |
+
+```bash
+BRAIN0_LLM_PROVIDER=orcarouter ORCAROUTER_API_KEY=sk-orca-… npx brain0 up
+```
+
+**Model list.** The providers drawer fetches `GET /v1/models` server-side with your key and builds
+the model selector from it; the browser only receives metadata. Only chat-capable routes are
+offered (`supported_endpoint_types` containing `openai` / `openai-response` / `anthropic` /
+`gemini`, excluding image-generation, video, rerank and embedding routes), and a request that
+needs image input narrows the list to models that explicitly declare it. If discovery fails, a
+small verified fallback catalog is shown and the panel says it is degraded — never a free-text
+model field.
+
+**Credentials.** Paste a key into the providers drawer (held by the server for that session only,
+masked in the UI, never written to disk or sent to the browser) or export `ORCAROUTER_API_KEY` to
+keep it across restarts. brain0 has no browser-login framework, so OrcaRouter's OAuth 2.0 + PKCE
+flow is not implemented here; the pasted key is the native path. A `401`/`403` from the gateway is
+terminal: the credential is marked as needing reconnection rather than retried, because an
+OrcaRouter key is durable and there is no refresh grant.
+
+Redaction is unchanged: the smart chat redacts free text and structural payload before a remote
+provider sees it, and the panel continues to report the egress state truthfully.
+
 ## Fail-safe
 
 If the model runtime is unavailable, brain0 never blocks: the summarizer falls back to a

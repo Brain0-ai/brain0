@@ -1,10 +1,13 @@
 /**
  * Pluggable LLM providers. At runtime the provider is LOCAL
- * (Ollama, via its OpenAI-compatible endpoint) or REMOTE (Anthropic / OpenAI). There is no offline
+ * (Ollama, via its OpenAI-compatible endpoint) or REMOTE (Anthropic / OpenAI / OrcaRouter Cyber
+ * Inference). There is no offline
  * runtime provider: {@link EchoLLM} exists ONLY for tests, and a missing/unreachable provider
  * becomes a {@link NullLLMProvider} that throws {@link NoLlmError} (the server surfaces a clear UI
  * state instead of silently echoing).
  */
+
+import { classifyOrcaRouterStatus } from "./orcarouter-credentials.js";
 
 export interface LlmMessage {
   role: "system" | "user" | "assistant";
@@ -135,6 +138,47 @@ export class OpenAICompatProvider implements LLMProvider {
 
 /** Back-compat alias (kept so existing `OpenAIProvider` imports keep resolving). */
 export const OpenAIProvider = OpenAICompatProvider;
+
+/**
+ * OrcaRouter Cyber Inference (`https://api.orcarouter.ai/v1`). The wire format is OpenAI Chat
+ * Completions, so the transport is inherited; what differs is the credential lifecycle. A 401/403
+ * from the relay means the durable key was revoked or is wrong — a terminal reauthentication
+ * requirement, never a retry or a refresh. The error carries a `kind` so the server can mark the
+ * exact account generation instead of looping on a dead credential.
+ */
+export class OrcaRouterProvider extends OpenAICompatProvider {
+  constructor(apiKey: string, model: string, baseUrl: string, descriptor?: Partial<ProviderDescriptor>) {
+    super(apiKey, model, baseUrl, { ...descriptor, name: "orcarouter", remote: true });
+  }
+
+  override async complete(messages: LlmMessage[]): Promise<string> {
+    try {
+      return await super.complete(messages);
+    } catch (err) {
+      throw asOrcaRouterError(err);
+    }
+  }
+
+  override async completeStructured(messages: LlmMessage[], schema: object): Promise<string> {
+    try {
+      return await super.completeStructured(messages, schema);
+    } catch (err) {
+      throw asOrcaRouterError(err);
+    }
+  }
+}
+
+/** Rewrap a transport error so the credential classification survives to the caller. */
+function asOrcaRouterError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const status = Number(/(?:failed|returned):?\s*(\d{3})/.exec(message)?.[1] ?? NaN);
+  const kind = Number.isNaN(status) ? undefined : classifyOrcaRouterStatus(status);
+  if (!kind) return err instanceof Error ? err : new Error(message);
+  const wrapped = new Error(message) as Error & { kind?: string; status?: number };
+  wrapped.kind = kind;
+  wrapped.status = status;
+  return wrapped;
+}
 
 /** Anthropic Claude (Messages API). Remote only. */
 export class ClaudeProvider implements LLMProvider {

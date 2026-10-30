@@ -399,6 +399,75 @@
       .send-btn.ready { background: var(--accent); color: #fff; }
       .send-btn.ready:hover { background: var(--accent-hover); transform: translateY(-1px); }
       .send-btn svg { width: 16px; height: 16px; }
+
+      /* ── Provider drawer (top-right): provider picker, key entry, model list ─────────────── */
+      .pp-drawer {
+        position: fixed; top: 64px; right: 20px; z-index: 20; width: 460px; max-height: calc(100vh - 96px);
+        overflow-y: auto; padding: 16px 18px 18px;
+        background: var(--surface-1); border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-lg); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+      }
+      .pp-drawer[hidden] { display: none; }
+      .pp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      .pp-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+      .pp-close { background: none; border: none; color: var(--ink-subtle); font-size: 20px;
+        line-height: 1; cursor: pointer; padding: 0 4px; }
+      .pp-close:hover { color: var(--ink); }
+      .pp-label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+        color: var(--ink-subtle); margin: 12px 0 6px; }
+      .pp-select, .pp-input {
+        width: 100%; background: var(--surface-2); color: var(--ink);
+        border: 1px solid var(--hairline); border-radius: var(--r-md);
+        font-family: var(--font-mono); font-size: 12px; padding: 8px 10px;
+      }
+      .pp-input:focus, .pp-select:focus { outline: none; border-color: var(--accent); }
+      .pp-row { display: flex; gap: 8px; }
+      .pp-row .pp-input { flex: 1; }
+      .pp-btn { background: var(--surface-2); color: var(--ink); border: 1px solid var(--hairline);
+        border-radius: var(--r-md); font-size: 12px; padding: 8px 12px; cursor: pointer; }
+      .pp-btn:hover { background: var(--surface-3); border-color: var(--hairline-strong); }
+      .pp-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .pp-btn.primary:hover { background: var(--accent-hover); }
+      .pp-note { font-size: 11px; color: var(--ink-subtle); margin: 6px 0 0; line-height: 1.45; }
+      .pp-note.warn { color: #e0a33a; }
+      .pp-note.err { color: var(--danger); }
+      .pp-card { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+      .pp-card-head h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+      .pp-sub { margin: 0; font-size: 11px; color: var(--ink-subtle); line-height: 1.5; }
+      .pp-sub a, .pp-links a { color: var(--accent-hover); text-decoration: none; }
+      .pp-sub a:hover, .pp-links a:hover { text-decoration: underline; }
+      .pp-status-line { font-family: var(--font-mono); font-size: 11px; margin: 8px 0 0;
+        padding: 5px 9px; border-radius: var(--r-md); background: var(--surface-2); }
+      .pp-status-line.ok { color: var(--success); }
+      .pp-status-line.warn { color: #e0a33a; }
+      .pp-status-line.err { color: var(--danger); }
+      .pp-status-line.muted { color: var(--ink-subtle); }
+      .pp-links { font-size: 11px; color: var(--ink-tertiary); margin: 8px 0 0; }
+      .pp-model { position: relative; }
+      .pp-trigger {
+        width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        background: var(--surface-2); color: var(--ink); border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-md); font-family: var(--font-mono); font-size: 12px;
+        padding: 8px 10px; cursor: pointer; text-align: left;
+      }
+      .pp-trigger:hover { border-color: var(--accent); }
+      .pp-trigger[aria-expanded="true"] { border-color: var(--accent); }
+      .pp-caret { color: var(--ink-subtle); }
+      .pp-menu {
+        position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+        max-height: 260px; overflow-y: auto; background: var(--surface-1);
+        border: 1px solid var(--hairline-strong); border-radius: var(--r-md);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65); padding: 4px;
+      }
+      .pp-menu[hidden] { display: none; }
+      .pp-item { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+        padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+      .pp-item:hover { background: var(--surface-3); }
+      .pp-item.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+      .pp-item-id { font-family: var(--font-mono); color: var(--ink); }
+      .pp-item-meta { font-family: var(--font-mono); font-size: 10px; color: var(--ink-tertiary);
+        white-space: nowrap; }
+      .pp-empty { margin: 8px; font-size: 12px; color: var(--ink-subtle); }
     </style>
   </head>
   <body>
@@ -417,6 +486,7 @@
         </svg>
       </span>
       <span class="spacer"></span>
+      <button id="providers" class="tb-btn" title="Choose a provider, key and model">Providers</button>
       <button id="refresh" class="tb-btn" title="Re-run the observer and reload the graph">Refresh</button>
       <span id="refresh-status" class="tb-status"></span>
       <div class="timeline">
@@ -481,6 +551,11 @@
         </dl>
       </div>
     </aside>
+
+    <!-- Provider drawer: a first-class provider picker (not a custom-base-URL field), the
+         OrcaRouter key entry for this session, and a model list built from the live catalog. -->
+    <div id="providers-drawer" class="pp-drawer" role="dialog" aria-modal="false"
+      aria-label="Providers" hidden></div>
 
     <form id="promptbar" autocomplete="off">
       <div class="prompt-box">

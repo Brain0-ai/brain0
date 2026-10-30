@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { BoundedCache, normalizeQuery } from "./askcache.js";
 import { isCrossSite, isLoopbackHost } from "./origin.js";
@@ -32,17 +32,22 @@ import {
 import {
   Brain0Agent,
   ClaudeProvider,
+  CredentialGenerations,
   EchoLLM,
   LocalEmbeddingProvider,
   OpenAICompatProvider,
   OpenAIEmbeddingProvider,
+  OrcaRouterProvider,
+  SessionCredentialSource,
   backfillEmbeddings,
   resolveEmbedderConfig,
   resolveLlmConfig,
+  resolveOrcaRouterCredential,
   type EmbeddingProvider,
   type GetText,
   type LLMProvider,
 } from "@brain0/agent";
+import { createProviderApi, providerApiStatus } from "./providers.js";
 
 // Embeddings default to LOCAL even when OPENAI_API_KEY is present (closing the silent egress of the
 // raw query); the remote OpenAI embedder is used only via BRAIN0_EMBED_PROVIDER=openai.
@@ -52,24 +57,40 @@ function buildEmbedder(): EmbeddingProvider {
   return new LocalEmbeddingProvider(c.dim);
 }
 
+// OrcaRouter credential seam: a key handed to the dashboard lives in this process only; the
+// environment remains the durable path. Both adapters are read by one resolver, so the provider,
+// the catalog and the status panel can never disagree about which key is in use.
+const orcaSession = new SessionCredentialSource();
+const orcaGenerations = new CredentialGenerations();
+// Model chosen in the dashboard for the current process (empty = provider default).
+let modelOverride = "";
+
 // LOCAL Ollama by default; a present API key opts into that remote provider; `echo` only when
 // explicitly pinned (tests/debug). NEVER a silent offline default. Probes once for a truthful
 // boot log + GUI notice; a provider unreachable at request time is handled by the route.
 async function buildLlm(): Promise<LLMProvider> {
   const c = resolveLlmConfig(process.env);
+  // OrcaRouter is opt-in (`BRAIN0_LLM_PROVIDER=orcarouter`) and reads its key through the credential
+  // seam, so a key pasted into the dashboard is picked up without restarting the server.
+  const model = c.provider === "orcarouter" && modelOverride ? modelOverride : c.model;
   let provider: LLMProvider;
   switch (c.provider) {
     case "anthropic":
-      provider = new ClaudeProvider(c.apiKey, c.model, 4096, c.endpoint);
+      provider = new ClaudeProvider(c.apiKey, model, 4096, c.endpoint);
       break;
     case "openai":
-      provider = new OpenAICompatProvider(c.apiKey, c.model, c.endpoint, { name: "openai", remote: true });
+      provider = new OpenAICompatProvider(c.apiKey, model, c.endpoint, { name: "openai", remote: true });
       break;
+    case "orcarouter": {
+      const credential = resolveOrcaRouterCredential(process.env, orcaSession);
+      provider = new OrcaRouterProvider(credential?.key ?? "", model, c.endpoint);
+      break;
+    }
     case "echo":
       provider = new EchoLLM();
       break;
     default:
-      provider = new OpenAICompatProvider("", c.model, c.endpoint, { name: "ollama", remote: false });
+      provider = new OpenAICompatProvider("", model, c.endpoint, { name: "ollama", remote: false });
       break;
   }
   const ok = provider.probe ? await provider.probe() : true;
@@ -82,6 +103,25 @@ async function buildLlm(): Promise<LLMProvider> {
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+/** Read a bounded JSON body (provider routes only; a key is a few hundred bytes at most). */
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    size += buf.length;
+    if (size > 16_384) throw new Error("request body too large");
+    chunks.push(buf);
+  }
+  if (chunks.length === 0) return {};
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 // Resolve to absolute paths against the current working directory. This matters because
@@ -109,8 +149,25 @@ const store = new Brain0Store(db);
 const payload = new FsPayloadReader(payloadDir);
 const getText: GetText = (ref) => payload.getText(ref);
 const embedder = buildEmbedder();
-const llm = await buildLlm();
-const agent = new Brain0Agent({ store, embedder, llm, getText, repo: repo || undefined });
+let llm = await buildLlm();
+let agent = new Brain0Agent({ store, embedder, llm, getText, repo: repo || undefined });
+
+// Provider panel API: status, live catalog, session key, model selection. Rebuilding the agent
+// after a credential/model change keeps one inference path for every GUI entry point.
+const providerApi = createProviderApi({
+  env: process.env,
+  session: orcaSession,
+  generations: orcaGenerations,
+  active: () => ({ provider: resolveLlmConfig(process.env).provider, model: llm.descriptor?.model ?? "" }),
+  applyModel: (model) => {
+    modelOverride = model;
+  },
+  reload: async () => {
+    llm = await buildLlm();
+    agent = new Brain0Agent({ store, embedder, llm, getText, repo: repo || undefined });
+    return { ok: llm.descriptor?.ok !== false };
+  },
+});
 
 // ── Live refresh (local dev only) ───────────────────────────────────────────────────────────
 // The dashboard's Refresh button re-runs the SAME passive observer the user runs by hand
@@ -324,6 +381,43 @@ const server = createServer((req, res) => {
         } else {
           const text = readablePayload(raw);
           json(res, 200, text === undefined ? { encrypted: true } : { diff: text });
+        }
+      } else if (url.pathname === "/api/providers") {
+        // Provider panel state: the registry, the active provider/model, whether a key is present
+        // (masked only) and how the model catalog resolved. No secret ever leaves this process.
+        json(res, 200, await providerApi.status());
+      } else if (url.pathname === "/api/providers/orcarouter/models") {
+        // Live catalog fetched server-side with the key; the browser only receives model metadata.
+        const modality = url.searchParams.get("modality") ?? undefined;
+        json(res, 200, await providerApi.models({ capability: url.searchParams.get("capability") ?? "chat", modality }));
+      } else if (url.pathname === "/api/providers/orcarouter/key" && req.method === "POST") {
+        if (req.headers["x-brain0-provider"] !== "1") {
+          json(res, 403, { error: "forbidden: missing x-brain0-provider header" });
+        } else {
+          const body = (await readJson(req)) as { api_key?: unknown };
+          try {
+            const saved = await providerApi.saveKey(typeof body.api_key === "string" ? body.api_key : "");
+            json(res, 200, saved);
+          } catch (err) {
+            json(res, providerApiStatus(err), { error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+      } else if (url.pathname === "/api/providers/orcarouter/key" && req.method === "DELETE") {
+        if (req.headers["x-brain0-provider"] !== "1") {
+          json(res, 403, { error: "forbidden: missing x-brain0-provider header" });
+        } else {
+          json(res, 200, await providerApi.clearKey());
+        }
+      } else if (url.pathname === "/api/providers/model" && req.method === "POST") {
+        if (req.headers["x-brain0-provider"] !== "1") {
+          json(res, 403, { error: "forbidden: missing x-brain0-provider header" });
+        } else {
+          const body = (await readJson(req)) as { model?: unknown };
+          try {
+            json(res, 200, await providerApi.selectModel(typeof body.model === "string" ? body.model : ""));
+          } catch (err) {
+            json(res, providerApiStatus(err), { error: err instanceof Error ? err.message : String(err) });
+          }
         }
       } else if (url.pathname === "/api/debug" && req.headers["x-brain0-ask"] !== "1") {
         // Each query can cost an LLM call (and a remote embedding). A cross-site page cannot set
