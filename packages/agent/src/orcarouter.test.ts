@@ -129,6 +129,6 @@ test("the provider registry exposes OrcaRouter as a first-class, catalogued entr
   // Every built-in provider keeps its own name — OrcaRouter is not a generic base-URL option.
   assert.deepEqual(
     PROVIDER_REGISTRY.map((p) => p.id),
-    ["ollama", "anthropic", "openai", "orcarouter", "echo"],
+    ["ollama", "anthropic", "openai", "orcarouter", "cheaperinference", "echo"],
   );
 });

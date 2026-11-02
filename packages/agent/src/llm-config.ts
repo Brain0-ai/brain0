@@ -15,10 +15,21 @@ import {
   ORCAROUTER_PROVIDER_ID,
   resolveOrcaRouterBase,
 } from "./orcarouter.js";
+import {
+  CHEAPERINFERENCE_API_BASE,
+  CHEAPERINFERENCE_DEFAULT_MODEL,
+  CHEAPERINFERENCE_PROVIDER_ID,
+} from "./cheaperinference.js";
 
 export type Env = Record<string, string | undefined>;
 
-export type LlmProviderName = "ollama" | "anthropic" | "openai" | "orcarouter" | "echo";
+export type LlmProviderName =
+  | "ollama"
+  | "anthropic"
+  | "openai"
+  | "orcarouter"
+  | "cheaperinference"
+  | "echo";
 
 export interface LlmConfig {
   provider: LlmProviderName;
@@ -76,6 +87,17 @@ export function resolveLlmConfig(env: Env): LlmConfig {
     remote: true,
   });
 
+  // Cheaper Inference: a named OpenAI-compatible gateway with its own key, endpoint and default
+  // model. Opt-in only — `BRAIN0_LLM_PROVIDER=cheaperinference` — like OrcaRouter: a key alone
+  // must not route prompts to a remote gateway.
+  const cheaperinference = (): LlmConfig => ({
+    provider: CHEAPERINFERENCE_PROVIDER_ID,
+    model: model ?? CHEAPERINFERENCE_DEFAULT_MODEL,
+    endpoint: endpoint ?? CHEAPERINFERENCE_API_BASE,
+    apiKey: env.CHEAPER_INFERENCE_API_KEY ?? "",
+    remote: true,
+  });
+
   switch (env.BRAIN0_LLM_PROVIDER?.toLowerCase()) {
     case "ollama":
       return ollama();
@@ -85,6 +107,8 @@ export function resolveLlmConfig(env: Env): LlmConfig {
       return openai();
     case "orcarouter":
       return orcarouter();
+    case "cheaperinference":
+      return cheaperinference();
     case "echo":
       return { provider: "echo", model: "", endpoint: "", apiKey: "", remote: false };
     default:

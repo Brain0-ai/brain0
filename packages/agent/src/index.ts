@@ -12,6 +12,7 @@ export * from "./intent.js";
 export * from "./redact.js";
 export * from "./llm-config.js";
 export * from "./orcarouter.js";
+export * from "./cheaperinference.js";
 export * from "./orcarouter-credentials.js";
 export * from "./models-catalog.js";
 export * from "./provider-registry.js";
