@@ -245,7 +245,7 @@ fn segments(cmd: &str) -> Vec<Vec<String>> {
 /// If the last two words are `<<`/`<<-` and a tag, remember the tag (quotes already stripped).
 fn note_heredoc_tag(words: &[String], pending: &mut Vec<String>) {
     if let [.., op, tag] = words {
-        if (op == "<<" || op == "<<-") && !pending.last().is_some_and(|t| t == tag) {
+        if (op == "<<" || op == "<<-") && pending.last().is_none_or(|t| t != tag) {
             pending.push(tag.clone());
         }
     }
