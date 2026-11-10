@@ -18,7 +18,7 @@ contribute changes.
 
 ## Development setup
 
-Prerequisites: Rust (via `rust-toolchain.toml`), Node 20+, pnpm.
+Prerequisites: Rust ≥ 1.89 (via `rust-toolchain.toml`), Node 20+, pnpm.
 
 ```bash
 # Rust
@@ -53,6 +53,28 @@ The [CLA Assistant](https://github.com/contributor-assistant/github-action) bot 
 PR with a one-line signing instruction and records your signature in an auditable registry. See
 [`cla/`](./cla/) for the full text and process. Founders and project bots are
 exempt. (`brain0-enterprise` requires no CLA — it has no external contributors.)
+
+## Releases
+
+Every pull request merged into `main` is released automatically
+([`auto-release.yml`](./.github/workflows/auto-release.yml)): the merge commit is tagged
+`vX.Y.Z`, then [`release.yml`](./.github/workflows/release.yml) builds the binaries, publishes
+the npm packages and creates the GitHub Release (binaries, npm tarballs, `SHA256SUMS`).
+
+Maintainers pick the version with a label on the pull request, before merging:
+
+| Label | Effect |
+| --- | --- |
+| *(none)* | patch: `0.1.3` → `0.1.4` |
+| `release:minor` | minor: `0.1.3` → `0.2.0` |
+| `release:major` | major: `0.1.3` → `1.0.0` |
+| `release:skip` | merge without releasing (docs, CI-only changes) |
+
+The tag is the source of truth for the version: the manifests on `main` are not bumped by the
+pipeline, which writes the tag's version into its own checkout before building. To choose a
+version by hand, raise it in a pull request with `node scripts/release-version.mjs set X.Y.Z`;
+the next release uses it if it is higher than the label's. To release the current `main`
+without a pull request, run the *auto-release* workflow from the Actions tab.
 
 ## Commit messages
 

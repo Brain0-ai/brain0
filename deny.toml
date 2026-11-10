@@ -25,6 +25,12 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
+# sqlcipher-src enters only through the opt-in `sqlcipher` feature (rusqlite/bundled-sqlcipher).
+# It bundles SQLite (public-domain "blessing") and libtomcrypt (WTFPL): both permissive, and
+# allowed for this crate alone rather than for the whole tree.
+exceptions = [
+    { allow = ["blessing", "WTFPL"], crate = "sqlcipher-src" },
+]
 
 [bans]
 multiple-versions = "warn"

@@ -1,26 +1,79 @@
 name: release
 
 # Build the Rust core for every platform, assemble the npm packages (`brain0` +
-# @brain0/cli-<platform>-<arch>), and publish. Publishing is DRY-RUN by default;
-# the real publish runs only when the NPM_TOKEN secret is present AND the workflow
-# was dispatched with publish=true (or a v* tag was pushed with the secret set).
+# @brain0/cli-<platform>-<arch>), publish them, and create the GitHub Release.
+#
+# Triggers:
+# - workflow_call from auto-release.yml with `tag` — every merged pull request (the usual path).
+# - a pushed v* tag (manual release).
+# - workflow_dispatch: a DRY-RUN unless publish=true. Dispatched on a v* tag with publish=true it
+#   resumes a release that failed part-way (versions already on npm are skipped, release assets
+#   are replaced).
+#
+# The tag is the source of truth for the version: it is stamped into the manifests of this
+# checkout (scripts/release-version.mjs) before anything is built, so the committed manifests
+# need not be bumped. npm publishing needs the NPM_TOKEN secret; without it the publish step is
+# a dry-run and says so.
 
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z) to build, publish and release"
+        type: string
+        required: true
+    secrets:
+      NPM_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       publish:
-        description: "Actually publish to npm (requires NPM_TOKEN secret)"
+        description: "Actually publish to npm and create the GitHub Release (requires NPM_TOKEN secret)"
         type: boolean
         default: false
 
 permissions:
-  contents: write   # create the GitHub Release with the tarballs attached
+  contents: write   # create the GitHub Release with the assets attached
   id-token: write   # npm --provenance (OIDC-signed publish attestation)
 
 jobs:
+  meta:
+    name: Resolve tag and mode
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.m.outputs.tag }}
+      version: ${{ steps.m.outputs.version }}
+      ref: ${{ steps.m.outputs.ref }}
+      real: ${{ steps.m.outputs.real }}
+    steps:
+      - id: m
+        env:
+          CALL_TAG: ${{ inputs.tag }}
+          DISPATCH_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -eu
+          # inputs.tag is set only by workflow_call (github.event_name is then the caller's).
+          TAG="$CALL_TAG"
+          if [ -z "$TAG" ] && [ "$GITHUB_REF_TYPE" = tag ]; then TAG="$GITHUB_REF_NAME"; fi
+          if [ -n "$TAG" ] && ! printf '%s' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::release tag must be vX.Y.Z, got \"$TAG\""
+            exit 1
+          fi
+          # A real run publishes and releases; a dry-run only builds and packs.
+          REAL=false
+          if [ -n "$CALL_TAG" ] || [ "$GITHUB_EVENT_NAME" = push ] || [ "$DISPATCH_PUBLISH" = true ]; then REAL=true; fi
+          {
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+            echo "ref=${TAG:-$GITHUB_SHA}"
+            echo "real=$REAL"
+          } >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG:-<none>} real=$REAL"
+
   binaries:
+    needs: meta
     strategy:
       matrix:
         # darwin-x64 is CROSS-compiled on Apple Silicon: GitHub retired the Intel macOS
@@ -45,22 +98,33 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.key }}
+      - uses: actions/setup-node@v4
+        if: needs.meta.outputs.version
+        with:
+          node-version: 22
+      # After rust-cache: the cache key stays the one of the committed lockfile.
+      - name: Stamp the release version
+        if: needs.meta.outputs.version
+        run: node scripts/release-version.mjs set "${{ needs.meta.outputs.version }}"
       - if: matrix.glibc
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - if: matrix.glibc
         run: pip install cargo-zigbuild==0.24.0 ziglang==0.17.0
+      # --locked: ship exactly the dependency set cargo-deny audited in Cargo.lock.
       - if: matrix.glibc
-        run: cargo zigbuild --release -p brain0-cli --target ${{ matrix.target }}.${{ matrix.glibc }}
+        run: cargo zigbuild --release --locked -p brain0-cli --target ${{ matrix.target }}.${{ matrix.glibc }}
       - if: "!matrix.glibc"
-        run: cargo build --release -p brain0-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p brain0-cli --target ${{ matrix.target }}
       - name: Guard — Linux binary must not need a newer glibc than ${{ matrix.glibc }}
         if: matrix.glibc
         run: |
@@ -78,29 +142,31 @@ jobs:
           if-no-files-found: error
 
   assemble:
-    needs: binaries
+    needs: [meta, binaries]
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      REAL: ${{ needs.meta.outputs.real }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.ref }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
-      - name: Guard — tag must match the package version
-        if: github.event_name == 'push'
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(node -p "require('./packages/cli/package.json').version")
-          if [ "$TAG" != "$PKG" ]; then
-            echo "::error::tag v$TAG != packages/cli version $PKG — bump the version or fix the tag"
-            exit 1
-          fi
       - run: pnpm install --frozen-lockfile
+      # Before the build: the bundles and the packed package.json files carry the release version.
+      - name: Stamp the release version
+        if: env.VERSION
+        run: node scripts/release-version.mjs set "$VERSION"
       - run: pnpm -r build
       - uses: actions/download-artifact@v4
         with:
           path: bin-artifacts
+          pattern: brain0-*
       - name: Assemble npm packages
         run: |
           node scripts/release-pack.mjs \
@@ -109,12 +175,17 @@ jobs:
             --binary darwin-x64=bin-artifacts/brain0-darwin-x64/brain0 \
             --binary darwin-arm64=bin-artifacts/brain0-darwin-arm64/brain0 \
             --out dist-npm
-      - name: Publish (dry-run unless explicitly enabled)
+      - name: Publish (dry-run unless this is a real release)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          DO_PUBLISH: ${{ (github.event_name == 'push' || inputs.publish) && secrets.NPM_TOKEN != '' }}
+          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
         run: |
           set -e
+          DO_PUBLISH=false
+          if [ "$REAL" = true ] && [ "$HAS_TOKEN" = true ]; then DO_PUBLISH=true; fi
+          if [ "$REAL" = true ] && [ "$HAS_TOKEN" != true ]; then
+            echo "::warning::NPM_TOKEN is not set: npm publish runs as a dry-run, nothing reaches the registry"
+          fi
           # Real publishes carry npm provenance (OIDC attestation — on brand for brain0).
           FLAG="--dry-run"
           if [ "$DO_PUBLISH" = "true" ]; then FLAG="--provenance"; fi
@@ -144,11 +215,28 @@ jobs:
         with:
           name: npm-packages
           path: dist-npm/*.tgz
-      - name: GitHub Release (tag pushes)
-        if: github.event_name == 'push'
+      - name: GitHub Release
+        if: env.TAG && env.REAL == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist-npm/*.tgz \
-            --title "brain0 $GITHUB_REF_NAME" \
-            --generate-notes
+          set -e
+          # Assets: the standalone binary per platform, the npm tarballs, and their checksums.
+          mkdir -p dist-release
+          for d in bin-artifacts/brain0-*/; do
+            key=$(basename "$d"); key=${key#brain0-}
+            chmod +x "$d/brain0"
+            tar -czf "dist-release/brain0-$TAG-$key.tar.gz" -C "$d" brain0
+          done
+          cp dist-npm/*.tgz dist-release/
+          (cd dist-release && sha256sum -- * > SHA256SUMS)
+          # A resumed release replaces the assets of the existing one.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist-release/* --clobber
+          else
+            gh release create "$TAG" dist-release/* \
+              --verify-tag \
+              --title "brain0 $TAG" \
+              --generate-notes
+          fi

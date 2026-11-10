@@ -21,10 +21,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all -- --check
+      # --locked: Cargo.lock must already match Cargo.toml — release builds use it as-is.
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --all-features --workspace
+        run: cargo test --locked --all-features --workspace
 
   typescript:
     name: TypeScript (build · test · lint)
@@ -39,6 +40,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm -r test
+      - name: Release scripts
+        run: node --test scripts/*.test.mjs
 
   security:
     name: Supply-chain (cargo-deny · pnpm audit)
