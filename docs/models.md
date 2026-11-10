@@ -125,6 +125,32 @@ OrcaRouter key is durable and there is no refresh grant.
 Redaction is unchanged: the smart chat redacts free text and structural payload before a remote
 provider sees it, and the panel continues to report the egress state truthfully.
 
+## Remote reasoning provider: Cheaper Inference
+
+The dashboard's smart chat can also run against [Cheaper Inference](https://cheaperinference.com),
+an OpenAI-compatible LLM gateway. One API key gives access to models from several labs. See the
+[Cheaper Inference docs](https://cheaperinference.com/docs).
+
+It is opt-in — brain0 stays local by default. The provider has its own id, key variable, endpoint
+and default model, and it uses the same OpenAI Chat Completions transport as the `openai` provider.
+
+| Setting | Value |
+|---|---|
+| Provider id | `cheaperinference` |
+| Display name | `Cheaper Inference` |
+| Inference base | `https://api.cheaperinference.com/v1` |
+| Key variable | `CHEAPER_INFERENCE_API_KEY` |
+| Default model | `gpt-5.4-mini` |
+| Model override | `BRAIN0_LLM_MODEL` (bare ids, e.g. `claude-sonnet-5`, `deepseek-v4-flash`) |
+| Endpoint override | `BRAIN0_LLM_ENDPOINT` |
+
+```bash
+BRAIN0_LLM_PROVIDER=cheaperinference CHEAPER_INFERENCE_API_KEY=… npx brain0 up
+```
+
+The key is read from the environment only. The providers drawer lists the provider; the key entry
+and the live model list in the drawer stay OrcaRouter-specific.
+
 ## Fail-safe
 
 If the model runtime is unavailable, brain0 never blocks: the summarizer falls back to a

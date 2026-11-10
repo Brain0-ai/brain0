@@ -86,6 +86,12 @@ async function buildLlm(): Promise<LLMProvider> {
       provider = new OrcaRouterProvider(credential?.key ?? "", model, c.endpoint);
       break;
     }
+    case "cheaperinference":
+      provider = new OpenAICompatProvider(c.apiKey, model, c.endpoint, {
+        name: "cheaperinference",
+        remote: true,
+      });
+      break;
     case "echo":
       provider = new EchoLLM();
       break;

@@ -18,6 +18,14 @@ import {
   ORCAROUTER_KEYS_URL,
   ORCAROUTER_PROVIDER_ID,
 } from "./orcarouter.js";
+import {
+  CHEAPERINFERENCE_API_BASE,
+  CHEAPERINFERENCE_DEFAULT_MODEL,
+  CHEAPERINFERENCE_DISPLAY_NAME,
+  CHEAPERINFERENCE_DOCS_URL,
+  CHEAPERINFERENCE_ENV_KEY,
+  CHEAPERINFERENCE_PROVIDER_ID,
+} from "./cheaperinference.js";
 
 export interface ProviderEntry {
   id: LlmProviderName;
@@ -82,6 +90,19 @@ export const PROVIDER_REGISTRY: readonly ProviderEntry[] = [
     modelsUrl: ORCAROUTER_CYBER_MODELS_URL,
     keysUrl: ORCAROUTER_KEYS_URL,
     envKey: ORCAROUTER_ENV_KEY,
+  },
+  {
+    id: CHEAPERINFERENCE_PROVIDER_ID,
+    name: CHEAPERINFERENCE_DISPLAY_NAME,
+    endpoint: CHEAPERINFERENCE_API_BASE,
+    defaultModel: CHEAPERINFERENCE_DEFAULT_MODEL,
+    remote: true,
+    catalog: false,
+    description:
+      "OpenAI-compatible gateway; one key for models from several labs. Opt-in via " +
+      "BRAIN0_LLM_PROVIDER=cheaperinference.",
+    docsUrl: CHEAPERINFERENCE_DOCS_URL,
+    envKey: CHEAPERINFERENCE_ENV_KEY,
   },
   {
     id: "echo",
