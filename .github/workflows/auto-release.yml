@@ -54,12 +54,26 @@ jobs:
     outputs:
       tag: ${{ steps.next.outputs.tag }}
     steps:
-      # pull_request_target runs with a write token: check out the MERGE commit (already on
-      # main, reviewed), never the pull request's head.
+      # pull_request_target runs with a write token: only code that is on main may run here,
+      # never the pull request's head. actions/checkout refuses a fork PR's head AND merge commit
+      # SHAs under pull_request_target, even once merged, so main is checked out by name, and
+      # the merge commit is used only after git proves it is part of main.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          ref: main
           fetch-depth: 0   # every tag, to find the latest release
+      - name: Move to the merge commit
+        if: github.event.pull_request.merge_commit_sha
+        env:
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -eu
+          if ! git merge-base --is-ancestor "$SHA" HEAD; then
+            echo "::error::merge commit $SHA is not on main: refusing to release it"
+            exit 1
+          fi
+          git checkout --quiet --detach "$SHA"
+          git log --oneline -1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
